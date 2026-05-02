@@ -160,6 +160,40 @@ textarea {
   font-family: var(--font-body);
 }
 
+/* Password input with show/hide toggle ----------------------------- */
+
+.password-wrap {
+  position: relative;
+}
+.password-wrap input {
+  padding-right: 44px; /* room for the toggle button */
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.password-toggle:hover {
+  color: var(--ink-soft);
+  background: var(--bg-tinted);
+}
+.password-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* Buttons --------------------------------------------------------------- */
 
 .btn {
