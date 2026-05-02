@@ -1,38 +1,39 @@
-/**
- * Diagnostic endpoint. Returns env var KEYS (not values) and DB connectivity.
- * Safe to leave deployed; will be removed once memory is verified working.
- */
-
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
+function findDatabaseUrl(): string | null {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  if (process.env.POSTGRES_URL) return process.env.POSTGRES_URL;
+  const keys = Object.keys(process.env).sort();
+  for (const k of keys) {
+    if (/_DATABASE_URL$/.test(k) && process.env[k]) return process.env[k]!;
+  }
+  for (const k of keys) {
+    if (/_POSTGRES_URL$/.test(k) && !/PRISMA|NON_POOLING|NO_SSL/.test(k) && process.env[k]) {
+      return process.env[k]!;
+    }
+  }
+  return null;
+}
+
 export async function GET() {
-  // List all env keys containing DB-related substrings (no values, just names)
   const dbRelatedKeys = Object.keys(process.env)
     .filter((k) => /DATABASE|POSTGRES|PG|NEON/i.test(k))
     .sort();
 
-  // Try multiple known var names — Neon sets several depending on version
-  const candidateUrls = [
-    process.env.DATABASE_URL,
-    process.env.POSTGRES_URL,
-    process.env.POSTGRES_PRISMA_URL,
-    process.env.DATABASE_POSTGRES_URL,
-  ];
-  const usableUrl = candidateUrls.find((u) => !!u);
+  const usableUrl = findDatabaseUrl();
 
   const checks: Record<string, unknown> = {
     timestamp: new Date().toISOString(),
     env: {
-      DATABASE_URL: !!process.env.DATABASE_URL,
-      POSTGRES_URL: !!process.env.POSTGRES_URL,
       AUTH_USERS_JSON: !!process.env.AUTH_USERS_JSON,
       AUTH_SECRET: !!process.env.AUTH_SECRET,
       ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
       COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || '(unset)',
       VERCEL_ENV: process.env.VERCEL_ENV || '(unset)',
     },
+    db_url_resolved: !!usableUrl,
     db_related_keys: dbRelatedKeys,
   };
 
