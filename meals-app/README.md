@@ -2,7 +2,7 @@
 
 A small private meal-planning app for Ben & Jenny.
 Lives at **meals.pinkcrocodile.dev**, gated by personal login,
-backed by Anthropic's Claude API.
+backed by Anthropic's Claude API, with persistent household memory in Postgres.
 
 ---
 
@@ -12,10 +12,12 @@ backed by Anthropic's Claude API.
 - **Edge middleware** that gates every route behind a session cookie
 - **JWT sessions** signed with a server-side secret (using `jose`, Edge-compatible)
 - **Cross-subdomain SSO** — cookie scoped to `.pinkcrocodile.dev` so logging
-  in here also signs you into `critique.pinkcrocodile.dev`,
-  `lab.pinkcrocodile.dev`, etc. when those exist
+  in here also signs you into other future pinkcrocodile.dev apps
 - **Chat UI** with auto-resizing composer and household preferences
 - **Server-side Anthropic API proxy** (`/api/chat`) — API key never exposed to the browser
+- **Persistent household memory** — Postgres-backed, populated by both:
+  - Explicit tool calls during chat (`remember_meal` / `forget_meal`)
+  - Automatic background extraction by Haiku 4.5 after each exchange
 - **Editorial-kitchen aesthetic** — Fraunces serif + Geist, paper cream, rhubarb pink
 
 ```
@@ -24,32 +26,65 @@ meals-app/
 │   ├── api/
 │   │   ├── auth/login         # POST credentials, set session cookie
 │   │   ├── auth/logout        # POST to clear cookie
-│   │   ├── chat               # POST messages to Anthropic, server-side
-│   │   └── me                 # GET current username
+│   │   ├── chat               # POST messages — handles tool use + after() extraction
+│   │   ├── me                 # GET current username
+│   │   ├── memories           # GET list, POST create
+│   │   └── memories/[id]      # PATCH update, DELETE remove
 │   ├── login/page.tsx         # Login page
-│   ├── page.tsx               # The chat UI
+│   ├── page.tsx               # The chat UI + memory drawer
 │   ├── croc.tsx               # Crocodile mark
 │   ├── globals.css            # All styles
 │   └── layout.tsx
 ├── lib/
-│   └── auth.ts                # Shared auth helpers — lift into a package later
+│   ├── auth.ts                # Auth helpers (JWT, cookies, validation)
+│   ├── db.ts                  # Neon serverless connection
+│   ├── memory.ts              # Memory CRUD + prompt formatter
+│   ├── tools.ts               # Anthropic tool definitions
+│   └── extract.ts             # Background memory extraction (Haiku)
+├── db/
+│   └── schema.sql             # One-time DB migration (run in Neon SQL editor)
 ├── middleware.ts              # Gates every route except /login
 └── .env.example
 ```
 
 ---
 
+## Architecture: how memory works
+
+Every chat request:
+
+1. Loads all current memories from Postgres
+2. Injects them into the system prompt (formatted as Loved/Avoided/Context lists)
+3. Calls Sonnet 4.6 with two tools available: `remember_meal` and `forget_meal`
+4. If Claude calls a tool, the route executes it (DB insert/delete) and loops
+5. Returns the final text + a list of memory actions to the client
+6. **After the response is sent**, fires a background Haiku 4.5 call (via `after()`)
+   that scans the transcript for any other lasting preferences worth remembering
+
+Two paths feed the same `meal_memories` table:
+- `source='explicit'` — saved via the `remember_meal` tool, immediate, in-chat
+- `source='extracted'` — saved by background Haiku extraction, ~2s after response
+
+Both are visible/editable/deletable in the Memories drawer.
+
+---
+
 ## Required environment variables
 
-Set these on the **Vercel team** (so they apply to every project on
-pinkcrocodile.dev), not just on this single project:
+| Variable | What it is | Set by |
+|---|---|---|
+| `AUTH_USERS_JSON` | JSON array: `[{"username":"Ben","password":"..."},{"username":"Jenny","password":"..."}]` | You manually |
+| `AUTH_SECRET` | Long random string (≥32 chars) for signing session JWTs | You manually |
+| `COOKIE_DOMAIN` | `.pinkcrocodile.dev` (with leading dot) in production for SSO | You manually |
+| `ANTHROPIC_API_KEY` | Claude API key | You manually |
+| `DATABASE_URL` | Postgres connection string | Auto-injected by Neon-Vercel integration |
 
-| Variable | What it is |
-|---|---|
-| `AUTH_USERS_JSON` | JSON array: `[{"username":"ben","password":"..."},{"username":"jenny","password":"..."}]` |
-| `AUTH_SECRET` | Long random string (≥32 chars) for signing session JWTs |
-| `COOKIE_DOMAIN` | Set to `.pinkcrocodile.dev` (with leading dot) in production for SSO |
-| `ANTHROPIC_API_KEY` | Your Claude API key |
+---
+
+## Database setup
+
+Once Neon is connected via the Vercel marketplace integration, run the contents
+of `db/schema.sql` once in the Neon SQL Editor. That's the entire migration.
 
 ---
 
@@ -57,30 +92,20 @@ pinkcrocodile.dev), not just on this single project:
 
 ```bash
 cp .env.example .env.local
-# fill in real values
+# fill in real values, including a DATABASE_URL pointing at your Neon db
 
 npm install
 npm run dev
 # open http://localhost:3000
 ```
 
-In local dev, leave `COOKIE_DOMAIN` blank — the cookie will scope to
-localhost and auth will work fine.
-
 ---
-
-## Adding a new user
-
-Edit `AUTH_USERS_JSON` in the Vercel dashboard, redeploy. Done.
 
 ## Adding a new app to pinkcrocodile.dev
 
-1. Copy `lib/auth.ts` and `middleware.ts` into the new app
-2. Make sure the new app reads the same `AUTH_USERS_JSON`,
-   `AUTH_SECRET` and `COOKIE_DOMAIN` env vars (all team-level
-   so this is automatic)
-3. Deploy. Users who logged into meals.pinkcrocodile.dev already
-   have a valid session for the new subdomain — no second login.
-
-When this happens enough times, lift `lib/auth.ts` and the
-middleware pattern into a private npm package.
+1. Copy `lib/auth.ts`, `middleware.ts`, and `lib/db.ts` into the new app
+2. Make sure the new app reads the same shared env vars
+3. If the new app should access shared memory, query the same `meal_memories`
+   table or create a sibling table (e.g. `critique_memories`) in the same DB
+4. Deploy. Users who logged into meals.pinkcrocodile.dev already have a valid
+   session for the new subdomain — no second login.

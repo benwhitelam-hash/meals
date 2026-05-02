@@ -593,6 +593,217 @@ textarea {
   cursor: not-allowed;
 }
 
+/* Memory pills inline beneath messages -------------------------- */
+
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+.memory-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  background: var(--olive-tint);
+  color: var(--olive);
+  border: 1px solid color-mix(in srgb, var(--olive) 18%, transparent);
+}
+.memory-pill svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.memory-pill.kind-love {
+  background: var(--olive-tint);
+  color: var(--olive);
+  border-color: color-mix(in srgb, var(--olive) 22%, transparent);
+}
+.memory-pill.kind-avoid {
+  background: var(--rhubarb-tint);
+  color: var(--rhubarb-deep);
+  border-color: color-mix(in srgb, var(--rhubarb) 18%, transparent);
+}
+.memory-pill.kind-context {
+  background: var(--bg-tinted);
+  color: var(--ink-soft);
+  border-color: var(--rule);
+}
+.memory-pill.kind-forgot {
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px dashed var(--rule);
+}
+
+/* Memory icon button with count badge ----------------------------- */
+
+.mem-icon-btn {
+  position: relative;
+}
+.mem-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--rhubarb);
+  color: white;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+}
+
+/* Memories drawer content ----------------------------------------- */
+
+.memory-group {
+  margin-bottom: var(--s-6);
+}
+.memory-group-title {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s-3);
+}
+.memory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  transition: border-color 120ms ease;
+}
+.memory-item:hover {
+  border-color: var(--rule-soft);
+}
+.memory-item:hover .memory-delete {
+  opacity: 1;
+}
+.memory-content {
+  flex: 1;
+  min-width: 0;
+}
+.memory-content p {
+  margin: 0 0 var(--s-1);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--ink);
+  word-wrap: break-word;
+}
+.memory-meta {
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+.memory-delete {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  opacity: 0.4;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.memory-delete:hover {
+  opacity: 1;
+  color: var(--rhubarb);
+  background: var(--rhubarb-tint);
+}
+.memory-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Empty state ----------------------------------------------------- */
+
+.empty-state {
+  text-align: center;
+  padding: var(--s-7) var(--s-4);
+  color: var(--ink-soft);
+  border: 1px dashed var(--rule);
+  border-radius: var(--r-md);
+  margin-bottom: var(--s-5);
+}
+.empty-state p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+/* Add-memory form ------------------------------------------------- */
+
+.memory-add {
+  margin-top: var(--s-5);
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--rule-soft);
+}
+.memory-add-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s-3);
+}
+.memory-add-row {
+  display: flex;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.memory-add-row select {
+  padding: var(--s-3) var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--bg-elevated);
+  border-radius: var(--r-md);
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+.memory-add-row select:focus {
+  border-color: var(--rhubarb);
+  box-shadow: 0 0 0 3px var(--rhubarb-tint);
+}
+.memory-add-row input {
+  flex: 1;
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  background: var(--bg-elevated);
+  border-radius: var(--r-md);
+  font-family: inherit;
+  font-size: 0.875rem;
+  outline: none;
+}
+.memory-add-row input:focus {
+  border-color: var(--rhubarb);
+  box-shadow: 0 0 0 3px var(--rhubarb-tint);
+}
+.memory-add .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 /* Mobile adjustments ---------------------------------------------------- */
 
 @media (max-width: 640px) {
