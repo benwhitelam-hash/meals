@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { CrocMark } from './croc';
+import { AppHeader } from './_components/AppHeader';
 
 // --------------------------------------------------------------------------
 // Types
@@ -20,16 +20,27 @@ interface Memory {
   source: MemorySource;
 }
 
-interface MemoryAction {
-  type: 'remembered' | 'forgot';
+interface Recipe {
+  id: string;
+  name: string;
+}
+
+interface ChatAction {
+  type:
+    | 'remembered'
+    | 'forgot'
+    | 'recipe_saved'
+    | 'recipe_updated'
+    | 'recipe_deleted';
   memory?: Memory;
+  recipe?: Recipe;
   id?: string;
 }
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
-  memoryActions?: MemoryAction[]; // only on assistant messages
+  chatActions?: ChatAction[];
 }
 
 interface Preferences {
@@ -56,7 +67,7 @@ const SUGGESTIONS = [
   { kicker: 'Plan', text: 'Plan dinners for the week ahead' },
   { kicker: 'Quick', text: 'Something on the table in 25 minutes tonight' },
   { kicker: 'Use up', text: 'I have chicken thighs and a tin of tomatoes' },
-  { kicker: 'Treat', text: 'A weekend dinner that feels a bit special' },
+  { kicker: 'Save', text: "Let me describe a dish to remember — it's…" },
 ];
 
 // --------------------------------------------------------------------------
@@ -64,7 +75,6 @@ const SUGGESTIONS = [
 // --------------------------------------------------------------------------
 
 export default function MealsPage() {
-  const [me, setMe] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -82,11 +92,6 @@ export default function MealsPage() {
 
   // ----- bootstrap
   useEffect(() => {
-    fetch('/api/me')
-      .then((r) => (r.ok ? r.json() : { user: null }))
-      .then((d) => setMe(d.user))
-      .catch(() => setMe(null));
-
     try {
       const stored = localStorage.getItem(PREFS_KEY);
       if (stored) {
@@ -97,7 +102,6 @@ export default function MealsPage() {
     } catch {
       /* ignore */
     }
-
     refreshMemories();
   }, []);
 
@@ -129,7 +133,7 @@ export default function MealsPage() {
   }
 
   async function deleteMemoryHandler(id: string) {
-    setMemories((curr) => curr.filter((m) => m.id !== id)); // optimistic
+    setMemories((curr) => curr.filter((m) => m.id !== id));
     try {
       await fetch(`/api/memories/${id}`, { method: 'DELETE' });
     } catch {
@@ -178,15 +182,12 @@ export default function MealsPage() {
             {
               role: 'assistant',
               content: data.content,
-              memoryActions: data.memoryActions || [],
+              chatActions: data.chatActions || [],
             },
           ]);
-          // If a memory action happened, optimistically refresh
-          if (Array.isArray(data.memoryActions) && data.memoryActions.length > 0) {
-            // tiny delay so insert is visible
+          if (Array.isArray(data.chatActions) && data.chatActions.length > 0) {
             setTimeout(refreshMemories, 200);
           }
-          // Background extraction may also have added memories — refresh shortly after
           setTimeout(refreshMemories, 4000);
         } else {
           setMessages([
@@ -231,60 +232,16 @@ export default function MealsPage() {
     setPrefsOpen(false);
   }
 
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.href = '/login';
-  }
-
   const isEmpty = messages.length === 0;
 
   return (
     <>
-      <header className="app-header">
-        <a href="/" className="brand" aria-label="Pink Crocodile — Meals">
-          <CrocMark size={28} />
-          <span>
-            pink crocodile <span className="brand-sep">·</span> meals
-          </span>
-        </a>
-        <div className="user-menu">
-          {me && (
-            <span className="who">
-              <strong>{me}</strong>
-            </span>
-          )}
-          <button
-            className="icon-btn mem-icon-btn"
-            onClick={() => setMemOpen(true)}
-            aria-label="Memories"
-            title="Memories"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path
-                d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"
-                strokeLinejoin="round"
-              />
-            </svg>
-            {memories.length > 0 && (
-              <span className="mem-count">{memories.length}</span>
-            )}
-          </button>
-          <button
-            className="icon-btn"
-            onClick={openPrefs}
-            aria-label="Household preferences"
-            title="Household preferences"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button className="btn btn-ghost" onClick={logout} title="Sign out">
-            Sign out
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        showMemoryButton
+        memoryCount={memories.length}
+        onOpenMemory={() => setMemOpen(true)}
+        onOpenPrefs={openPrefs}
+      />
 
       <main className="shell">
         {isEmpty && (
@@ -302,7 +259,16 @@ export default function MealsPage() {
                 <button
                   key={s.text}
                   className="suggestion"
-                  onClick={() => send(s.text)}
+                  onClick={() => {
+                    if (s.text.startsWith('Let me describe')) {
+                      setInput(
+                        'Quick recipe to remember: '
+                      );
+                      textareaRef.current?.focus();
+                    } else {
+                      send(s.text);
+                    }
+                  }}
                   disabled={loading}
                 >
                   <span className="kicker">{s.kicker}</span>
@@ -317,10 +283,10 @@ export default function MealsPage() {
           <div className="thread">
             {messages.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
-                <div className="msg-meta">{m.role === 'user' ? me || 'you' : 'kitchen'}</div>
+                <div className="msg-meta">{m.role === 'user' ? 'you' : 'kitchen'}</div>
                 <div className="msg-body">{m.content}</div>
-                {m.memoryActions && m.memoryActions.length > 0 && (
-                  <MemoryActionsRow actions={m.memoryActions} />
+                {m.chatActions && m.chatActions.length > 0 && (
+                  <ChatActionsRow actions={m.chatActions} />
                 )}
               </div>
             ))}
@@ -388,19 +354,14 @@ export default function MealsPage() {
 // Sub-components
 // --------------------------------------------------------------------------
 
-function MemoryActionsRow({ actions }: { actions: MemoryAction[] }) {
+function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
   return (
     <div className="memory-actions">
       {actions.map((a, i) => {
         if (a.type === 'remembered' && a.memory) {
           return (
             <span key={i} className={`memory-pill kind-${a.memory.kind}`}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path
-                  d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <PillIcon name="bookmark" />
               Remembered: {a.memory.content}
             </span>
           );
@@ -408,10 +369,42 @@ function MemoryActionsRow({ actions }: { actions: MemoryAction[] }) {
         if (a.type === 'forgot') {
           return (
             <span key={i} className="memory-pill kind-forgot">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              </svg>
+              <PillIcon name="trash" />
               Forgot a memory
+            </span>
+          );
+        }
+        if (a.type === 'recipe_saved' && a.recipe) {
+          return (
+            <a
+              key={i}
+              href="/recipes"
+              className="memory-pill kind-recipe"
+              title="View recipe"
+            >
+              <PillIcon name="book" />
+              Saved recipe: {a.recipe.name}
+            </a>
+          );
+        }
+        if (a.type === 'recipe_updated' && a.recipe) {
+          return (
+            <a
+              key={i}
+              href="/recipes"
+              className="memory-pill kind-recipe"
+              title="View recipe"
+            >
+              <PillIcon name="edit" />
+              Updated recipe: {a.recipe.name}
+            </a>
+          );
+        }
+        if (a.type === 'recipe_deleted') {
+          return (
+            <span key={i} className="memory-pill kind-forgot">
+              <PillIcon name="trash" />
+              Deleted a recipe
             </span>
           );
         }
@@ -419,6 +412,35 @@ function MemoryActionsRow({ actions }: { actions: MemoryAction[] }) {
       })}
     </div>
   );
+}
+
+function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' }) {
+  if (name === 'bookmark')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" strokeLinejoin="round" />
+      </svg>
+    );
+  if (name === 'trash')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      </svg>
+    );
+  if (name === 'book')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+      </svg>
+    );
+  if (name === 'edit')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z" />
+      </svg>
+    );
+  return null;
 }
 
 function PreferencesDrawer({
@@ -608,9 +630,7 @@ function MemoriesDrawer({
           {avoids.length > 0 && (
             <MemoryGroup title="Avoided" items={avoids} onDelete={onDelete} />
           )}
-          {ctx.length > 0 && (
-            <MemoryGroup title="Context" items={ctx} onDelete={onDelete} />
-          )}
+          {ctx.length > 0 && <MemoryGroup title="Context" items={ctx} onDelete={onDelete} />}
 
           <form onSubmit={submit} className="memory-add">
             <div className="memory-add-title">Add a memory</div>

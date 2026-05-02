@@ -10,8 +10,16 @@ import {
   type Memory,
   type MemoryKind,
 } from '@/lib/memory';
+import {
+  listRecipes,
+  recipesForPrompt,
+  createRecipe,
+  updateRecipe,
+  deleteRecipe,
+  type Recipe,
+} from '@/lib/recipes';
 import { ALL_TOOLS } from '@/lib/tools';
-import { extractAndSave } from '@/lib/extract';
+import { extractAndSave, extractIngredients } from '@/lib/extract';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -33,16 +41,26 @@ interface IncomingMessage {
 }
 
 /**
- * Public-facing record of an action the chat performed (e.g. saved a memory).
- * Returned to the client so the UI can show "💾 Remembered: …" indicators.
+ * Public-facing record of an action the chat performed (e.g. saved a memory or recipe).
+ * Returned to the client so the UI can show inline indicators.
  */
-interface MemoryAction {
-  type: 'remembered' | 'forgot';
+interface ChatAction {
+  type:
+    | 'remembered'
+    | 'forgot'
+    | 'recipe_saved'
+    | 'recipe_updated'
+    | 'recipe_deleted';
   memory?: Memory;
+  recipe?: Recipe;
   id?: string;
 }
 
-function buildSystemPrompt(prefs: Preferences = {}, memories: Memory[]): string {
+function buildSystemPrompt(
+  prefs: Preferences = {},
+  memories: Memory[],
+  recipes: Recipe[]
+): string {
   const parts: string[] = [
     "You are the household's personal meal-planning assistant. You help with recipe ideas, weekly meal plans, shopping lists, and answering cooking questions.",
     '',
@@ -52,6 +70,7 @@ function buildSystemPrompt(prefs: Preferences = {}, memories: Memory[]): string 
     '- For meal ideas, suggest 3-5 options with a one-line pitch each. Ask before going deeper unless the user has been specific.',
     '- Use British English (courgette, aubergine, coriander) and metric/imperial as appropriate for UK cooking.',
     '- If a request conflicts with the household preferences below, gently flag it.',
+    '- When suggesting meals, prefer recipes from the saved collection if any fit — they\'re trusted favourites.',
     '',
     'Household context:',
     `- ${prefs.household?.trim() || 'A household of 2 adults, in the UK.'}`,
@@ -62,14 +81,17 @@ function buildSystemPrompt(prefs: Preferences = {}, memories: Memory[]): string 
   if (prefs.equipment?.trim()) parts.push(`- Kitchen equipment available: ${prefs.equipment.trim()}`);
   if (prefs.notes?.trim()) parts.push(`- Other notes: ${prefs.notes.trim()}`);
 
-  // Append memory section
+  // Memories section
   parts.push(memoriesForPrompt(memories));
 
-  // If memories exist, surface their IDs so forget_meal can target them
+  // Memory IDs for forget_meal targeting
   if (memories.length) {
     parts.push('Memory IDs (only used for the forget_meal tool):');
     for (const m of memories) parts.push(`- ${m.id}: ${m.content}`);
   }
+
+  // Recipes section (already includes IDs and full bodies)
+  parts.push(recipesForPrompt(recipes));
 
   return parts.join('\n');
 }
@@ -102,17 +124,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No messages' }, { status: 400 });
   }
 
-  // Load current memories for prompt + tool context
+  // Load current memories and recipes for prompt + tool context
   let memories: Memory[] = [];
+  let recipes: Recipe[] = [];
   try {
-    memories = await listMemories();
+    [memories, recipes] = await Promise.all([listMemories(), listRecipes()]);
   } catch (e) {
-    console.error('[chat] could not load memories:', e);
-    // Don't fail the chat — degrade gracefully without memories
+    console.error('[chat] could not load memories/recipes:', e);
+    // Don't fail the chat — degrade gracefully
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const systemPrompt = buildSystemPrompt(preferences, memories);
+  const systemPrompt = buildSystemPrompt(preferences, memories, recipes);
 
   // Build the running message array. We mutate this across tool-use rounds.
   const apiMessages: Anthropic.MessageParam[] = incomingMessages.map((m) => ({
@@ -120,7 +143,9 @@ export async function POST(request: Request) {
     content: m.content,
   }));
 
-  const memoryActions: MemoryAction[] = [];
+  const chatActions: ChatAction[] = [];
+  // Recipes saved this turn — used for ingredient extraction in after()
+  const recipesSavedThisTurn: { id: string; name: string; body: string }[] = [];
   let assistantText = '';
 
   try {
@@ -171,7 +196,7 @@ export async function POST(request: Request) {
                 content: input.content.trim(),
                 source: 'explicit',
               });
-              memoryActions.push({ type: 'remembered', memory: newMemory });
+              chatActions.push({ type: 'remembered', memory: newMemory });
               resultText = `Saved memory ${newMemory.id}: [${newMemory.kind}] ${newMemory.content}`;
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'unknown';
@@ -188,7 +213,7 @@ export async function POST(request: Request) {
             try {
               const ok = await deleteMemory(input.id);
               if (ok) {
-                memoryActions.push({ type: 'forgot', id: input.id });
+                chatActions.push({ type: 'forgot', id: input.id });
                 resultText = `Deleted memory ${input.id}`;
               } else {
                 resultText = 'error: memory not found';
@@ -197,6 +222,84 @@ export async function POST(request: Request) {
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'unknown';
               resultText = `error deleting: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'save_recipe') {
+          const input = tu.input as { name?: string; body_md?: string };
+          if (!input.name?.trim() || !input.body_md?.trim()) {
+            resultText = 'error: name and body_md required';
+            isError = true;
+          } else {
+            try {
+              const newRecipe = await createRecipe({
+                created_by: username,
+                name: input.name.trim(),
+                body_md: input.body_md.trim(),
+              });
+              chatActions.push({ type: 'recipe_saved', recipe: newRecipe });
+              recipesSavedThisTurn.push({
+                id: newRecipe.id,
+                name: newRecipe.name,
+                body: newRecipe.body_md,
+              });
+              resultText = `Saved recipe ${newRecipe.id}: "${newRecipe.name}"`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error saving recipe: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'update_recipe') {
+          const input = tu.input as { id?: string; name?: string; body_md?: string };
+          if (!input.id) {
+            resultText = 'error: id required';
+            isError = true;
+          } else {
+            try {
+              const updated = await updateRecipe(input.id, {
+                ...(input.name ? { name: input.name } : {}),
+                ...(input.body_md ? { body_md: input.body_md } : {}),
+              });
+              if (!updated) {
+                resultText = 'error: recipe not found';
+                isError = true;
+              } else {
+                chatActions.push({ type: 'recipe_updated', recipe: updated });
+                // If body changed, re-extract ingredients in background
+                if (input.body_md) {
+                  recipesSavedThisTurn.push({
+                    id: updated.id,
+                    name: updated.name,
+                    body: updated.body_md,
+                  });
+                }
+                resultText = `Updated recipe ${updated.id}: "${updated.name}"`;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error updating recipe: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'delete_recipe') {
+          const input = tu.input as { id?: string };
+          if (!input.id) {
+            resultText = 'error: id required';
+            isError = true;
+          } else {
+            try {
+              const ok = await deleteRecipe(input.id);
+              if (ok) {
+                chatActions.push({ type: 'recipe_deleted', id: input.id });
+                resultText = `Deleted recipe ${input.id}`;
+              } else {
+                resultText = 'error: recipe not found';
+                isError = true;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error deleting recipe: ${msg}`;
               isError = true;
             }
           }
@@ -226,7 +329,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // Schedule background extraction AFTER the response is sent
+  // Schedule background work AFTER the response is sent:
+  //   1. Extract any new household preferences from the transcript
+  //   2. Extract structured ingredients for any recipes saved this turn
   after(async () => {
     try {
       const fullTranscript: IncomingMessage[] = [
@@ -235,12 +340,24 @@ export async function POST(request: Request) {
       ];
       await extractAndSave(fullTranscript, username);
     } catch (e) {
-      console.error('[chat] background extraction failed:', e);
+      console.error('[chat] background memory extraction failed:', e);
+    }
+
+    for (const r of recipesSavedThisTurn) {
+      try {
+        const ingredients = await extractIngredients(r.name, r.body);
+        if (ingredients.length > 0) {
+          await updateRecipe(r.id, { ingredients });
+          console.log(`[chat] extracted ${ingredients.length} ingredients for ${r.name}`);
+        }
+      } catch (e) {
+        console.error(`[chat] ingredient extraction failed for ${r.id}:`, e);
+      }
     }
   });
 
   return NextResponse.json({
     content: assistantText,
-    memoryActions,
+    chatActions,
   });
 }

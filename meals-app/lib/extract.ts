@@ -123,3 +123,70 @@ Extract new lasting preferences as JSON array, or [] if none.`;
   if (saved > 0) console.log(`[extract] saved ${saved} memory/memories`);
   return saved;
 }
+
+// ============================================================
+// Ingredient extraction — used by save_recipe tool
+// ============================================================
+
+import type { Ingredient } from './recipes';
+
+const INGREDIENT_SYSTEM = `You extract a structured ingredient list from a free-form recipe.
+
+Output ONLY a JSON array of objects with shape: {"name": "...", "quantity": "..."}
+- name = the ingredient itself, lowercase, generic enough to put on a shopping list (e.g. "chicken thighs", "double cream", "tinned tomatoes")
+- quantity = optional, vague is fine (e.g. "2", "a glug", "1 tin", "small handful")
+
+Rules:
+- One entry per distinct ingredient. Don't split "salt and pepper" — make it two entries.
+- Skip items that aren't shopping-list-worthy (water, ice, "to taste").
+- If the recipe is vague, do your best — partial extraction is fine.
+- Output JSON only, no preamble or markdown fences.`;
+
+export async function extractIngredients(
+  name: string,
+  bodyMd: string
+): Promise<Ingredient[]> {
+  if (!process.env.ANTHROPIC_API_KEY) return [];
+
+  const prompt = `Recipe name: ${name}\n\nRecipe body:\n${bodyMd}\n\nExtract ingredients as JSON array.`;
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  let response;
+  try {
+    response = await client.messages.create({
+      model: EXTRACTION_MODEL,
+      max_tokens: 1024,
+      system: INGREDIENT_SYSTEM,
+      messages: [{ role: 'user', content: prompt }],
+    });
+  } catch (e) {
+    console.error('[extract-ingredients] Anthropic call failed:', e);
+    return [];
+  }
+
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+
+  const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (x): x is Ingredient =>
+          x && typeof x.name === 'string' && x.name.trim().length > 0
+      )
+      .map((x) => ({
+        name: x.name.trim().toLowerCase(),
+        ...(x.quantity ? { quantity: String(x.quantity).trim() } : {}),
+      }));
+  } catch {
+    console.error('[extract-ingredients] could not parse JSON:', text);
+    return [];
+  }
+}

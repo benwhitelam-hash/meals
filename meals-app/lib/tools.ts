@@ -53,4 +53,88 @@ export const FORGET_MEAL_TOOL: Anthropic.Tool = {
   },
 };
 
-export const ALL_TOOLS = [REMEMBER_MEAL_TOOL, FORGET_MEAL_TOOL];
+// =================================================================
+// Recipe tools
+// =================================================================
+
+export const SAVE_RECIPE_TOOL: Anthropic.Tool = {
+  name: 'save_recipe',
+  description:
+    'Save a new recipe to the household collection. Call this when the user describes ' +
+    'a dish they want to remember — even loosely. Preserve their voice and informal ' +
+    "wording in the body — don't sanitise or over-structure. The body is markdown; you " +
+    "may use ## headings for 'Ingredients' and 'Method' if it improves readability, " +
+    'but only if the user supplied that level of detail. Short and casual is fine.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      name: {
+        type: 'string',
+        description:
+          'A short, recognisable name for the recipe — what the user calls it day-to-day. ' +
+          'E.g. "Friday tray bake", "Mum\'s chilli", "The chicken thing". Title case but informal.',
+      },
+      body_md: {
+        type: 'string',
+        description:
+          'The recipe body, in markdown. Include ingredients (with quantities if known) ' +
+          'and method. Keep the user\'s voice. If they mentioned timing, equipment, or tips, ' +
+          'include those too.',
+      },
+    },
+    required: ['name', 'body_md'],
+  },
+};
+
+export const UPDATE_RECIPE_TOOL: Anthropic.Tool = {
+  name: 'update_recipe',
+  description:
+    'Edit an existing recipe. Use when the user wants to tweak, correct, or extend a recipe ' +
+    'they previously saved (e.g. "I do it with paprika now"). You can update name, body, or both. ' +
+    'Provide the recipe id from the system prompt context.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The UUID of the recipe to update.',
+      },
+      name: {
+        type: 'string',
+        description: 'New name. Omit if not changing.',
+      },
+      body_md: {
+        type: 'string',
+        description:
+          'New full body in markdown. Omit if not changing. Note: this REPLACES the body, ' +
+          "so include the bits you want to keep too — don't just send the diff.",
+      },
+    },
+    required: ['id'],
+  },
+};
+
+export const DELETE_RECIPE_TOOL: Anthropic.Tool = {
+  name: 'delete_recipe',
+  description:
+    'Delete a saved recipe. Use only when the user clearly wants it removed (not just "I never make this anymore"). ' +
+    'Confirm tentatively in the response — the deletion is permanent.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The UUID of the recipe to delete.',
+      },
+    },
+    required: ['id'],
+  },
+};
+
+export const ALL_TOOLS = [
+  REMEMBER_MEAL_TOOL,
+  FORGET_MEAL_TOOL,
+  SAVE_RECIPE_TOOL,
+  UPDATE_RECIPE_TOOL,
+  DELETE_RECIPE_TOOL,
+];
