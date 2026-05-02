@@ -417,6 +417,34 @@ textarea {
   gap: var(--s-5);
   padding: var(--s-5) 0 var(--s-7);
 }
+.thread-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--s-4);
+  margin-bottom: calc(-1 * var(--s-3));
+}
+.thread-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  background: transparent;
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-md);
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.thread-clear-btn:hover {
+  color: var(--ink-soft);
+  border-color: var(--rule);
+}
+.thread-clear-btn svg {
+  width: 14px;
+  height: 14px;
+}
 .msg {
   display: flex;
   flex-direction: column;
@@ -694,6 +722,17 @@ textarea {
   background: #d6e0f3;
   color: #1d3567;
   border-color: rgba(44, 72, 134, 0.36);
+}
+.memory-pill.kind-shopping {
+  background: #eaf3ec;
+  color: #335c3f;
+  border-color: rgba(51, 92, 63, 0.2);
+  text-decoration: none;
+}
+.memory-pill.kind-shopping:hover {
+  background: #d8e8dc;
+  color: #25462f;
+  border-color: rgba(51, 92, 63, 0.36);
 }
 
 /* Memory icon button with count badge ----------------------------- */
@@ -1460,6 +1499,199 @@ textarea {
   box-shadow: 0 0 0 3px var(--rhubarb-tint);
 }
 
+/* Shopping page --------------------------------------------------- */
+
+.shopping-shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-5) calc(var(--s-8) + 80px);
+  /* extra bottom padding so sticky add row never overlaps last item */
+}
+
+.shopping-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-5);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.shopping-title {
+  font-size: 1.875rem;
+  font-style: italic;
+  margin: 0 0 var(--s-1);
+  line-height: 1.1;
+}
+.shopping-meta {
+  font-size: 0.8125rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+.shopping-done-btn {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+}
+
+.shopping-generate-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-5);
+}
+.shopping-gen-btn {
+  font-size: 0.8125rem;
+  padding: var(--s-2) var(--s-3);
+}
+
+.shopping-status {
+  margin-bottom: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-style: italic;
+  animation: status-in 200ms ease;
+}
+@keyframes status-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.shopping-empty {
+  text-align: center;
+  padding: var(--s-7) var(--s-4);
+  color: var(--ink-soft);
+}
+.shopping-empty p {
+  margin: 0 0 var(--s-2);
+}
+.shopping-empty-hint {
+  font-size: 0.875rem;
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.shopping-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+.shopping-group {
+  /* nothing — the group title and items handle their own spacing */
+}
+.shopping-group-title {
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-style: italic;
+  font-weight: 400;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  margin: 0 0 var(--s-2);
+  padding-bottom: var(--s-1);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.shopping-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.shopping-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-2) 0;
+  gap: var(--s-2);
+  transition: opacity 150ms ease;
+}
+.shopping-item.checked {
+  opacity: 0.45;
+}
+.shopping-item-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 1;
+  cursor: pointer;
+  padding: var(--s-2) 0;
+  /* make the whole row a tap target */
+}
+.shopping-item-label input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--olive);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.shopping-item-content {
+  font-size: 1rem;
+  line-height: 1.3;
+  color: var(--ink);
+}
+.shopping-item.checked .shopping-item-content {
+  text-decoration: line-through;
+  color: var(--ink-faint);
+}
+.shopping-item-delete {
+  width: 32px;
+  height: 32px;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.shopping-item:hover .shopping-item-delete,
+.shopping-item:focus-within .shopping-item-delete {
+  opacity: 1;
+}
+.shopping-item-delete:hover {
+  color: var(--rhubarb-deep);
+  background: var(--rhubarb-tint);
+}
+.shopping-item-delete svg {
+  width: 16px;
+  height: 16px;
+}
+
+.shopping-add-row {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-5);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+  z-index: 10;
+}
+.shopping-add-row > * {
+  max-width: 720px;
+}
+.shopping-add-input {
+  flex: 1;
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  background: var(--bg-elevated);
+  border-radius: var(--r-md);
+  font-family: inherit;
+  font-size: 1rem;
+  outline: none;
+}
+.shopping-add-input:focus {
+  border-color: var(--rhubarb);
+  box-shadow: 0 0 0 3px var(--rhubarb-tint);
+}
+
 /* Mobile adjustments ---------------------------------------------------- */
 
 @media (max-width: 640px) {
@@ -1534,5 +1766,23 @@ textarea {
   }
   .plan-week-label h1 {
     font-size: 1.125rem;
+  }
+  /* Shopping page mobile */
+  .shopping-shell {
+    padding: var(--s-4) var(--s-3) calc(var(--s-7) + 80px);
+  }
+  .shopping-title {
+    font-size: 1.5rem;
+  }
+  .shopping-add-row {
+    padding: var(--s-3) var(--s-3) calc(var(--s-3) + env(safe-area-inset-bottom));
+  }
+  /* Always show delete icon on touch — no hover state */
+  .shopping-item-delete {
+    opacity: 0.4;
+  }
+  .shopping-item-label input[type='checkbox'] {
+    width: 24px;
+    height: 24px;
   }
 }

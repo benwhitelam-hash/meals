@@ -248,6 +248,71 @@ export const CLEAR_MEAL_PLAN_ENTRY_TOOL: Anthropic.Tool = {
   },
 };
 
+// =================================================================
+// Shopping list tools
+// =================================================================
+
+export const GENERATE_SHOPPING_LIST_TOOL: Anthropic.Tool = {
+  name: 'generate_shopping_list',
+  description:
+    "Build a shopping list from the meal plan for a given week. Pulls ingredients from each " +
+    "saved recipe in the plan, dedupes them, and categorises them by supermarket aisle. " +
+    "APPENDS to the current open list (preserves any items the user has already added manually). " +
+    "If no list exists, creates one. Use when the user asks for a shopping list. " +
+    "After running, briefly summarise how many items were added.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      week_start: {
+        type: 'string',
+        description:
+          "ISO date YYYY-MM-DD of the Monday of the target week. Use the current week's Monday from the system prompt unless the user specifies otherwise.",
+      },
+    },
+    required: ['week_start'],
+  },
+};
+
+export const ADD_TO_SHOPPING_LIST_TOOL: Anthropic.Tool = {
+  name: 'add_to_shopping_list',
+  description:
+    "Add one or more items to the current open shopping list (or create a list if none exists). " +
+    "Use when the user wants to add things mid-week, like 'add bin bags and washing tabs to the list'. " +
+    "Items get auto-categorised; you don't need to specify a category.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      items: {
+        type: 'array',
+        description: 'List of item names to add.',
+        items: {
+          type: 'object',
+          properties: {
+            content: {
+              type: 'string',
+              description: 'The item name as it should appear on the list (e.g. "milk", "bin bags").',
+            },
+          },
+          required: ['content'],
+        },
+      },
+    },
+    required: ['items'],
+  },
+};
+
+export const COMPLETE_SHOPPING_LIST_TOOL: Anthropic.Tool = {
+  name: 'complete_shopping_list',
+  description:
+    "Mark the current open shopping list as done (i.e. the user has been shopping). " +
+    "After this, the next generate or add will start a fresh list. Use when the user says " +
+    "they've finished shopping or wants to start fresh.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {},
+  },
+};
+
 export const ALL_TOOLS = [
   REMEMBER_MEAL_TOOL,
   FORGET_MEAL_TOOL,
@@ -257,4 +322,7 @@ export const ALL_TOOLS = [
   PROPOSE_MEAL_PLAN_TOOL,
   SET_MEAL_PLAN_ENTRY_TOOL,
   CLEAR_MEAL_PLAN_ENTRY_TOOL,
+  GENERATE_SHOPPING_LIST_TOOL,
+  ADD_TO_SHOPPING_LIST_TOOL,
+  COMPLETE_SHOPPING_LIST_TOOL,
 ];

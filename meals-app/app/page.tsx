@@ -34,9 +34,13 @@ interface ChatAction {
     | 'recipe_deleted'
     | 'plan_set'
     | 'plan_entry_set'
-    | 'plan_entry_cleared';
+    | 'plan_entry_cleared'
+    | 'shopping_list_generated'
+    | 'shopping_item_added'
+    | 'shopping_completed';
   memory?: Memory;
   recipe?: Recipe;
+  added_count?: number;
   week_start?: string;
   day?: string;
   id?: string;
@@ -80,7 +84,9 @@ const SUGGESTIONS = [
 // --------------------------------------------------------------------------
 
 export default function MealsPage() {
+  const [me, setMe] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chatHydrated, setChatHydrated] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -97,6 +103,11 @@ export default function MealsPage() {
 
   // ----- bootstrap
   useEffect(() => {
+    fetch('/api/me')
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((d) => setMe(d.user))
+      .catch(() => setMe(null));
+
     try {
       const stored = localStorage.getItem(PREFS_KEY);
       if (stored) {
@@ -109,6 +120,36 @@ export default function MealsPage() {
     }
     refreshMemories();
   }, []);
+
+  // Hydrate the chat thread from localStorage once we know who we are.
+  // Keyed by username so Ben and Jenny don't share chat history on the same browser.
+  useEffect(() => {
+    if (!me || chatHydrated) return;
+    try {
+      const stored = localStorage.getItem(`pc_chat_${me}_v1`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setMessages(parsed);
+      }
+    } catch {
+      /* ignore */
+    }
+    setChatHydrated(true);
+  }, [me, chatHydrated]);
+
+  // Persist messages whenever they change (after hydration).
+  useEffect(() => {
+    if (!me || !chatHydrated) return;
+    try {
+      if (messages.length === 0) {
+        localStorage.removeItem(`pc_chat_${me}_v1`);
+      } else {
+        localStorage.setItem(`pc_chat_${me}_v1`, JSON.stringify(messages));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [messages, me, chatHydrated]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -285,7 +326,27 @@ export default function MealsPage() {
         )}
 
         {!isEmpty && (
-          <div className="thread">
+          <>
+            <div className="thread-toolbar">
+              <button
+                className="thread-clear-btn"
+                onClick={() => {
+                  if (confirm('Start a new conversation? Current chat will be cleared.')) {
+                    setMessages([]);
+                  }
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path
+                    d="M12 2v6m0 0l-3-3m3 3l3-3M3 13c0 4.97 4.03 9 9 9s9-4.03 9-9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                New chat
+              </button>
+            </div>
+            <div className="thread">
             {messages.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
                 <div className="msg-meta">{m.role === 'user' ? 'you' : 'kitchen'}</div>
@@ -307,6 +368,7 @@ export default function MealsPage() {
             )}
             <div ref={threadEndRef} />
           </div>
+          </>
         )}
 
         <div className="composer">
@@ -448,13 +510,48 @@ function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
             </span>
           );
         }
+        if (a.type === 'shopping_list_generated') {
+          return (
+            <a
+              key={i}
+              href="/shopping"
+              className="memory-pill kind-shopping"
+              title="View shopping list"
+            >
+              <PillIcon name="basket" />
+              Built shopping list ({a.added_count ?? 0} item
+              {a.added_count === 1 ? '' : 's'} added)
+            </a>
+          );
+        }
+        if (a.type === 'shopping_item_added') {
+          return (
+            <a
+              key={i}
+              href="/shopping"
+              className="memory-pill kind-shopping"
+              title="View shopping list"
+            >
+              <PillIcon name="basket" />
+              Added {a.added_count ?? 0} to shopping list
+            </a>
+          );
+        }
+        if (a.type === 'shopping_completed') {
+          return (
+            <span key={i} className="memory-pill kind-forgot">
+              <PillIcon name="basket" />
+              Marked shopping list done
+            </span>
+          );
+        }
         return null;
       })}
     </div>
   );
 }
 
-function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'calendar' }) {
+function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'calendar' | 'basket' }) {
   if (name === 'bookmark')
     return (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -487,6 +584,16 @@ function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'ca
         <line x1="16" y1="2" x2="16" y2="6" strokeLinecap="round" />
         <line x1="8" y1="2" x2="8" y2="6" strokeLinecap="round" />
         <line x1="3" y1="10" x2="21" y2="10" />
+      </svg>
+    );
+  if (name === 'basket')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path
+          d="M5 7l1 14h12l1-14M9 7V5a3 3 0 0 1 6 0v2M3 7h18"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   return null;

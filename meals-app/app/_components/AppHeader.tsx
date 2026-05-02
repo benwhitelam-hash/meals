@@ -57,6 +57,12 @@ export function AppHeader({
         <Link href="/plan" className={`nav-link ${isActive('/plan') ? 'active' : ''}`}>
           Plan
         </Link>
+        <Link
+          href="/shopping"
+          className={`nav-link ${isActive('/shopping') ? 'active' : ''}`}
+        >
+          Shopping
+        </Link>
       </nav>
 
       <div className="user-menu">

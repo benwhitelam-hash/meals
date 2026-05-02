@@ -190,3 +190,76 @@ export async function extractIngredients(
     return [];
   }
 }
+
+// ============================================================
+// Item categorisation — used by shopping list (single + batch)
+// ============================================================
+
+import type { Category } from './shopping';
+import { CATEGORIES } from './shopping';
+
+const CATEGORIZE_SYSTEM = `You categorize shopping list items into UK supermarket aisle groups.
+
+Valid categories (use exactly these strings):
+- produce (fruit, veg, herbs, salad)
+- meat (incl. fish, seafood, deli meats)
+- dairy (milk, cheese, yogurt, butter, eggs, cream)
+- bakery (bread, rolls, pastries, cakes)
+- frozen (anything frozen)
+- pantry (tins, dry goods, oil, vinegar, spices, sauces, rice, pasta, snacks)
+- drinks (juice, soft drinks, water, alcohol, tea, coffee)
+- household (cleaning supplies, paper goods, toiletries, pet food, bin bags)
+- other (anything that doesn't fit)
+
+Output ONLY a JSON object mapping each item name to its category, e.g.:
+{"chicken thighs": "meat", "olive oil": "pantry"}
+
+Rules:
+- Use the exact item name as the key.
+- Use only the category strings listed above.
+- No preamble, no markdown fences, just JSON.`;
+
+export async function categorizeItems(
+  names: string[]
+): Promise<Record<string, Category>> {
+  if (!process.env.ANTHROPIC_API_KEY || names.length === 0) return {};
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const prompt = `Categorize these items:\n${names.map((n) => `- ${n}`).join('\n')}`;
+
+  let response;
+  try {
+    response = await client.messages.create({
+      model: EXTRACTION_MODEL,
+      max_tokens: 2048,
+      system: CATEGORIZE_SYSTEM,
+      messages: [{ role: 'user', content: prompt }],
+    });
+  } catch (e) {
+    console.error('[categorize] Anthropic call failed:', e);
+    return {};
+  }
+
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+
+  const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    const result: Record<string, Category> = {};
+    for (const [name, cat] of Object.entries(parsed)) {
+      if (typeof cat === 'string' && (CATEGORIES as readonly string[]).includes(cat)) {
+        result[name] = cat as Category;
+      }
+    }
+    return result;
+  } catch {
+    console.error('[categorize] could not parse JSON:', text);
+    return {};
+  }
+}

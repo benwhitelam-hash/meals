@@ -40,3 +40,29 @@ CREATE TABLE IF NOT EXISTS meal_plans (
   updated_at  timestamptz NOT NULL DEFAULT now(),
   updated_by  text NOT NULL
 );
+
+-- Shopping lists — one open list at a time, items grouped by category
+-- Auto-created by lib/shopping.ts on first query
+
+CREATE TABLE IF NOT EXISTS shopping_lists (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  completed_at  timestamptz,
+  source_week   date,
+  created_by    text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shopping_list_items (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  list_id     uuid NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
+  content     text NOT NULL,
+  category    text NOT NULL DEFAULT 'other',
+  source      text NOT NULL DEFAULT 'manual',
+  recipe_id   uuid,
+  checked     boolean NOT NULL DEFAULT false,
+  added_by    text NOT NULL,
+  added_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS shopping_lists_active_idx ON shopping_lists (completed_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS shopping_list_items_list_idx ON shopping_list_items (list_id);

@@ -32,8 +32,17 @@ import {
   type PlanEntry,
   ALL_DAYS,
 } from '@/lib/plans';
+import {
+  getActiveList,
+  createList,
+  addItem,
+  completeList,
+  generateFromPlan,
+  shoppingForPrompt,
+  type ShoppingList,
+} from '@/lib/shopping';
 import { ALL_TOOLS } from '@/lib/tools';
-import { extractAndSave, extractIngredients } from '@/lib/extract';
+import { extractAndSave, extractIngredients, categorizeItems } from '@/lib/extract';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -67,10 +76,15 @@ interface ChatAction {
     | 'recipe_deleted'
     | 'plan_set'
     | 'plan_entry_set'
-    | 'plan_entry_cleared';
+    | 'plan_entry_cleared'
+    | 'shopping_list_generated'
+    | 'shopping_item_added'
+    | 'shopping_completed';
   memory?: Memory;
   recipe?: Recipe;
   plan?: MealPlan;
+  shopping_list?: ShoppingList;
+  added_count?: number;
   week_start?: string;
   day?: DayCode;
   id?: string;
@@ -83,7 +97,8 @@ function buildSystemPrompt(
   thisWeekStart: string,
   thisWeekPlan: MealPlan | null,
   nextWeekStart: string,
-  nextWeekPlan: MealPlan | null
+  nextWeekPlan: MealPlan | null,
+  shoppingList: ShoppingList | null
 ): string {
   // Today as a long-form English date
   const today = new Date();
@@ -109,6 +124,7 @@ function buildSystemPrompt(
     '- If a request conflicts with the household preferences below, gently flag it.',
     "- When suggesting meals, prefer recipes from the saved collection if any fit — they're trusted favourites.",
     '- When the user asks to plan the week, use propose_meal_plan. When they want to swap a single day, use set_meal_plan_entry. When they\'re out a day, use clear_meal_plan_entry.',
+    '- When the user asks for a shopping list from a planned week, use generate_shopping_list. When they want to add things to the current list mid-week, use add_to_shopping_list. When they\'ve finished shopping, use complete_shopping_list.',
     '',
     'Date context:',
     `- Today is ${todayLabel}.`,
@@ -142,6 +158,12 @@ function buildSystemPrompt(
   parts.push(planForPrompt(thisWeekPlan, thisWeekStart, recipeNames));
   parts.push('');
   parts.push(planForPrompt(nextWeekPlan, nextWeekStart, recipeNames));
+
+  // Current shopping list
+  parts.push('');
+  parts.push('## Shopping list');
+  parts.push('');
+  parts.push(shoppingForPrompt(shoppingList));
 
   return parts.join('\n');
 }
@@ -182,12 +204,14 @@ export async function POST(request: Request) {
   let recipes: Recipe[] = [];
   let thisWeekPlan: MealPlan | null = null;
   let nextWeekPlan: MealPlan | null = null;
+  let shoppingList: ShoppingList | null = null;
   try {
-    [memories, recipes, thisWeekPlan, nextWeekPlan] = await Promise.all([
+    [memories, recipes, thisWeekPlan, nextWeekPlan, shoppingList] = await Promise.all([
       listMemories(),
       listRecipes(),
       getPlan(thisWeekStart),
       getPlan(nextWeekStart),
+      getActiveList(),
     ]);
   } catch (e) {
     console.error('[chat] could not load context:', e);
@@ -202,7 +226,8 @@ export async function POST(request: Request) {
     thisWeekStart,
     thisWeekPlan,
     nextWeekStart,
-    nextWeekPlan
+    nextWeekPlan,
+    shoppingList
   );
 
   // Build the running message array. We mutate this across tool-use rounds.
@@ -464,6 +489,114 @@ export async function POST(request: Request) {
               resultText = `error clearing entry: ${msg}`;
               isError = true;
             }
+          }
+        } else if (tu.name === 'generate_shopping_list') {
+          const input = tu.input as { week_start?: string };
+          if (!input.week_start) {
+            resultText = 'error: week_start required';
+            isError = true;
+          } else {
+            try {
+              const result = await generateFromPlan(
+                input.week_start,
+                username,
+                categorizeItems
+              );
+              if (!result) {
+                resultText =
+                  'no plan or no recipes in plan for that week — nothing to generate';
+                isError = true;
+              } else {
+                chatActions.push({
+                  type: 'shopping_list_generated',
+                  shopping_list: result.list,
+                  added_count: result.added,
+                  week_start: input.week_start,
+                });
+                resultText =
+                  `Added ${result.added} new items to the shopping list. ` +
+                  (result.skipped_duplicates > 0
+                    ? `Skipped ${result.skipped_duplicates} duplicates already on the list. `
+                    : '') +
+                  (result.skipped_no_ingredients > 0
+                    ? `${result.skipped_no_ingredients} recipe(s) had no extracted ingredients yet.`
+                    : '');
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error generating list: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'add_to_shopping_list') {
+          const input = tu.input as { items?: { content?: string }[] };
+          const cleanedItems = (input.items ?? [])
+            .map((it) => it.content?.trim())
+            .filter((c): c is string => !!c && c.length > 0);
+          if (cleanedItems.length === 0) {
+            resultText = 'error: at least one item with content required';
+            isError = true;
+          } else {
+            try {
+              // Get or create active list
+              let list = await getActiveList();
+              if (!list) {
+                list = await createList(username);
+              }
+
+              // Filter out duplicates
+              const existingNames = new Set(
+                list.items.map((i) => i.content.toLowerCase().trim())
+              );
+              const toAdd = cleanedItems.filter(
+                (c) => !existingNames.has(c.toLowerCase())
+              );
+
+              if (toAdd.length === 0) {
+                resultText = `All ${cleanedItems.length} item(s) were already on the list — nothing added.`;
+              } else {
+                const categories = await categorizeItems(toAdd);
+                for (const content of toAdd) {
+                  await addItem({
+                    list_id: list.id,
+                    content,
+                    category: categories[content] ?? 'other',
+                    source: 'manual',
+                    added_by: username,
+                  });
+                }
+                chatActions.push({
+                  type: 'shopping_item_added',
+                  added_count: toAdd.length,
+                });
+                resultText = `Added ${toAdd.length} item(s) to the shopping list.`;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error adding to list: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'complete_shopping_list') {
+          try {
+            const list = await getActiveList();
+            if (!list) {
+              resultText = 'no active shopping list to complete';
+              isError = true;
+            } else {
+              const ok = await completeList(list.id);
+              if (ok) {
+                chatActions.push({ type: 'shopping_completed' });
+                resultText = `Marked the shopping list as done (${list.items.length} item(s) archived).`;
+              } else {
+                resultText = 'error: could not complete list';
+                isError = true;
+              }
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'unknown';
+            resultText = `error completing list: ${msg}`;
+            isError = true;
           }
         } else {
           resultText = `error: unknown tool ${tu.name}`;
