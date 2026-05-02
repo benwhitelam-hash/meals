@@ -35,6 +35,8 @@ interface ChatAction {
     | 'plan_set'
     | 'plan_entry_set'
     | 'plan_entry_cleared'
+    | 'plan_activity_set'
+    | 'plan_activity_cleared'
     | 'shopping_list_generated'
     | 'shopping_item_added'
     | 'shopping_completed';
@@ -43,6 +45,7 @@ interface ChatAction {
   added_count?: number;
   week_start?: string;
   day?: string;
+  text?: string;
   id?: string;
 }
 
@@ -507,6 +510,28 @@ function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
             <span key={i} className="memory-pill kind-forgot">
               <PillIcon name="calendar" />
               Cleared {capitalise(a.day || '')}
+            </span>
+          );
+        }
+        if (a.type === 'plan_activity_set') {
+          return (
+            <a
+              key={i}
+              href="/plan"
+              className="memory-pill kind-plan"
+              title="View plan"
+            >
+              <PillIcon name="calendar" />
+              Noted {capitalise(a.day || '')} activity
+              {a.text ? `: ${a.text}` : ''}
+            </a>
+          );
+        }
+        if (a.type === 'plan_activity_cleared') {
+          return (
+            <span key={i} className="memory-pill kind-forgot">
+              <PillIcon name="calendar" />
+              Cleared {capitalise(a.day || '')} activity
             </span>
           );
         }

@@ -37,9 +37,16 @@ interface PlanEntry {
   notes?: string;
 }
 
+interface PlanActivity {
+  day: DayCode;
+  text: string;
+  notes?: string;
+}
+
 interface MealPlan {
   week_start: string;
   entries: PlanEntry[];
+  activities: PlanActivity[];
   created_at: string;
   updated_at: string;
   updated_by: string;
@@ -184,6 +191,47 @@ export default function PlanPage() {
     }
   }
 
+  async function handleSaveActivity(
+    day: DayCode,
+    text: string,
+    notes?: string
+  ) {
+    try {
+      const res = await fetch(`/api/plans/${weekStart}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          day,
+          action: 'set_activity',
+          text,
+          ...(notes ? { notes } : {}),
+        }),
+      });
+      if (res.ok) {
+        const { plan: newPlan } = await res.json();
+        setPlan(newPlan);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function handleClearActivity(day: DayCode) {
+    try {
+      const res = await fetch(`/api/plans/${weekStart}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day, action: 'clear_activity' }),
+      });
+      if (res.ok) {
+        const { plan: newPlan } = await res.json();
+        setPlan(newPlan);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <>
       <AppHeader />
@@ -232,6 +280,7 @@ export default function PlanPage() {
           <div className="plan-grid">
             {ALL_DAYS.map((day) => {
               const entry = plan?.entries.find((e) => e.day === day);
+              const activity = plan?.activities.find((a) => a.day === day);
               const date = dayDate(weekStart, day);
               const isPast = date < new Date(new Date().setHours(0, 0, 0, 0));
               const isThisDay =
@@ -243,6 +292,7 @@ export default function PlanPage() {
                   day={day}
                   date={date}
                   entry={entry}
+                  activity={activity}
                   recipe={entry?.recipe_id ? recipeById[entry.recipe_id] : undefined}
                   isPast={isPast}
                   isToday={isThisDay}
@@ -268,9 +318,14 @@ export default function PlanPage() {
           day={editingDay}
           date={dayDate(weekStart, editingDay)}
           existing={plan?.entries.find((e) => e.day === editingDay)}
+          existingActivity={plan?.activities.find((a) => a.day === editingDay)}
           recipes={recipes}
           onSave={(entry) => handleSaveEntry(editingDay, entry)}
           onClear={() => handleClearEntry(editingDay)}
+          onSaveActivity={(text, notes) =>
+            handleSaveActivity(editingDay, text, notes)
+          }
+          onClearActivity={() => handleClearActivity(editingDay)}
           onCancel={() => setEditingDay(null)}
         />
       )}
@@ -286,6 +341,7 @@ function DayCell({
   day,
   date,
   entry,
+  activity,
   recipe,
   isPast,
   isToday,
@@ -294,6 +350,7 @@ function DayCell({
   day: DayCode;
   date: Date;
   entry?: PlanEntry;
+  activity?: PlanActivity;
   recipe?: Recipe;
   isPast: boolean;
   isToday: boolean;
@@ -301,10 +358,11 @@ function DayCell({
 }) {
   const dateNum = date.getDate();
   const monthShort = date.toLocaleDateString('en-GB', { month: 'short' });
+  const hasContent = !!entry || !!activity;
 
   return (
     <button
-      className={`day-cell ${entry ? 'filled' : 'empty'} ${isPast ? 'past' : ''} ${
+      className={`day-cell ${hasContent ? 'filled' : 'empty'} ${isPast ? 'past' : ''} ${
         isToday ? 'today' : ''
       }`}
       onClick={onClick}
@@ -314,7 +372,7 @@ function DayCell({
             ? recipe?.name || 'recipe'
             : entry.text
           : 'no meal planned, click to add'
-      }`}
+      }${activity ? `; activity: ${activity.text}` : ''}`}
     >
       <div className="day-cell-head">
         <span className="day-name">{DAY_SHORT[day]}</span>
@@ -336,9 +394,18 @@ function DayCell({
             </>
           )
         ) : (
-          <div className="day-empty-hint">+ add</div>
+          <div className="day-empty-hint">{activity ? '' : '+ add'}</div>
         )}
       </div>
+      {activity && (
+        <div className="day-activity">
+          <span className="day-activity-label">on:</span>{' '}
+          <span className="day-activity-text">{activity.text}</span>
+          {activity.notes && (
+            <span className="day-activity-notes"> · {activity.notes}</span>
+          )}
+        </div>
+      )}
     </button>
   );
 }
@@ -351,17 +418,23 @@ function DayEditModal({
   day,
   date,
   existing,
+  existingActivity,
   recipes,
   onSave,
   onClear,
+  onSaveActivity,
+  onClearActivity,
   onCancel,
 }: {
   day: DayCode;
   date: Date;
   existing?: PlanEntry;
+  existingActivity?: PlanActivity;
   recipes: Recipe[];
   onSave: (e: Omit<PlanEntry, 'day'>) => void;
   onClear: () => void;
+  onSaveActivity: (text: string, notes?: string) => Promise<void>;
+  onClearActivity: () => Promise<void>;
   onCancel: () => void;
 }) {
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(
@@ -372,6 +445,12 @@ function DayEditModal({
   );
   const [notes, setNotes] = useState<string>(existing?.notes ?? '');
   const [search, setSearch] = useState('');
+  const [activityText, setActivityText] = useState<string>(
+    existingActivity?.text ?? ''
+  );
+  const [activityNotes, setActivityNotes] = useState<string>(
+    existingActivity?.notes ?? ''
+  );
 
   // Picking a recipe clears free text and vice versa — they're mutually exclusive
   function pickRecipe(id: string) {
@@ -387,7 +466,34 @@ function DayEditModal({
     ? recipes.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()))
     : recipes;
 
-  function save() {
+  async function save() {
+    // Save the meal if any meal is selected
+    const mealChanged =
+      (selectedRecipeId && selectedRecipeId !== existing?.recipe_id) ||
+      (freeText.trim() && freeText.trim() !== existing?.text) ||
+      (notes.trim() !== (existing?.notes ?? ''));
+
+    // Save the activity if changed
+    const trimmedActivity = activityText.trim();
+    const trimmedActivityNotes = activityNotes.trim();
+    const activityChanged =
+      trimmedActivity !== (existingActivity?.text ?? '') ||
+      trimmedActivityNotes !== (existingActivity?.notes ?? '');
+
+    // Activity-only updates: handle separately
+    if (activityChanged) {
+      if (trimmedActivity) {
+        await onSaveActivity(
+          trimmedActivity,
+          trimmedActivityNotes || undefined
+        );
+      } else if (existingActivity) {
+        await onClearActivity();
+      }
+    }
+
+    // Meal updates use the existing onSave path (which closes the modal).
+    // If only activity changed, close the modal manually after.
     if (selectedRecipeId) {
       onSave({
         kind: 'recipe',
@@ -400,10 +506,17 @@ function DayEditModal({
         text: freeText.trim(),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
+    } else if (!mealChanged) {
+      // Nothing meal-related; close manually
+      onCancel();
     }
   }
 
-  const canSave = !!selectedRecipeId || !!freeText.trim();
+  const canSave =
+    !!selectedRecipeId ||
+    !!freeText.trim() ||
+    activityText.trim() !== (existingActivity?.text ?? '') ||
+    activityNotes.trim() !== (existingActivity?.notes ?? '');
   const dateLabel = date.toLocaleDateString('en-GB', {
     weekday: 'long',
     day: 'numeric',
@@ -481,7 +594,7 @@ function DayEditModal({
           </div>
 
           <div className="day-section">
-            <div className="day-section-title">Notes (optional)</div>
+            <div className="day-section-title">Meal notes (optional)</div>
             <input
               type="text"
               className="day-freetext-input"
@@ -490,12 +603,37 @@ function DayEditModal({
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+
+          <div className="day-section day-activity-section">
+            <div className="day-section-title">What's on this evening?</div>
+            <div className="hint">
+              Optional — note anything that affects dinner planning, e.g. book club, gym, late
+              meeting.
+            </div>
+            <input
+              type="text"
+              className="day-freetext-input"
+              placeholder="e.g. book club 8pm"
+              value={activityText}
+              onChange={(e) => setActivityText(e.target.value)}
+            />
+            {activityText.trim() && (
+              <input
+                type="text"
+                className="day-freetext-input"
+                style={{ marginTop: '8px' }}
+                placeholder="Activity notes (optional) — e.g. eating before"
+                value={activityNotes}
+                onChange={(e) => setActivityNotes(e.target.value)}
+              />
+            )}
+          </div>
         </div>
 
         <div className="day-modal-foot">
           {existing && (
             <button className="btn btn-ghost day-clear-btn" onClick={onClear}>
-              Clear day
+              Clear meal
             </button>
           )}
           <div className="day-modal-foot-right">

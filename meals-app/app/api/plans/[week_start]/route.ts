@@ -6,6 +6,8 @@ import {
   setPlan,
   setEntry,
   clearEntry,
+  setActivity,
+  clearActivity,
   ALL_DAYS,
   type DayCode,
   type EntryKind,
@@ -79,8 +81,9 @@ export async function PUT(
 
 /**
  * PATCH updates a single day. Body:
- * { day: 'mon', action: 'set'|'clear', kind?: 'recipe'|'freetext',
- *   recipe_id?, text?, notes? }
+ * { day: 'mon',
+ *   action: 'set' | 'clear' | 'set_activity' | 'clear_activity',
+ *   kind?: 'recipe'|'freetext', recipe_id?, text?, notes? }
  */
 export async function PATCH(
   request: Request,
@@ -95,7 +98,7 @@ export async function PATCH(
 
   let body: {
     day?: DayCode;
-    action?: 'set' | 'clear';
+    action?: 'set' | 'clear' | 'set_activity' | 'clear_activity';
     kind?: EntryKind;
     recipe_id?: string;
     text?: string;
@@ -139,7 +142,30 @@ export async function PATCH(
       );
       return NextResponse.json({ plan });
     }
-    return NextResponse.json({ error: 'action must be set or clear' }, { status: 400 });
+    if (body.action === 'set_activity') {
+      if (!body.text?.trim()) {
+        return NextResponse.json({ error: 'text required' }, { status: 400 });
+      }
+      const plan = await setActivity(
+        week_start,
+        body.day,
+        {
+          text: body.text.trim(),
+          ...(body.notes?.trim() ? { notes: body.notes.trim() } : {}),
+        },
+        user
+      );
+      return NextResponse.json({ plan });
+    }
+    if (body.action === 'clear_activity') {
+      const plan = await clearActivity(week_start, body.day, user);
+      if (!plan) return NextResponse.json({ error: 'plan not found' }, { status: 404 });
+      return NextResponse.json({ plan });
+    }
+    return NextResponse.json(
+      { error: 'action must be set, clear, set_activity, or clear_activity' },
+      { status: 400 }
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown';
     return NextResponse.json({ error: 'db error', detail: message }, { status: 500 });

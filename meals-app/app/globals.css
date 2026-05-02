@@ -1355,6 +1355,43 @@ textarea {
   margin-top: var(--s-4);
 }
 
+/* Activity strip within a day cell */
+.day-activity {
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px dashed var(--rule);
+  background: var(--bg-tinted);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--ink-soft);
+  text-align: left;
+}
+.day-activity-label {
+  font-style: italic;
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+.day-activity-text {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+.day-activity-notes {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+.day-cell.empty .day-activity {
+  background: var(--bg-elevated);
+  border-top-style: solid;
+  border-top-color: var(--rule-soft);
+}
+
+/* Visually highlight the activity section in the modal */
+.day-activity-section {
+  padding-top: var(--s-5);
+  border-top: 1px dashed var(--rule);
+}
+
 .plan-empty-hint {
   text-align: center;
   color: var(--ink-soft);
@@ -1743,6 +1780,7 @@ textarea {
   .day-cell {
     min-height: 80px;
     flex-direction: row;
+    flex-wrap: wrap;
   }
   .day-cell-head {
     flex-direction: column;
@@ -1759,6 +1797,13 @@ textarea {
   }
   .day-cell-body {
     justify-content: center;
+    flex: 1 1 calc(100% - 80px);
+  }
+  .day-activity {
+    flex: 1 1 100%;
+    border-top: 1px dashed var(--rule);
+    border-left: 80px solid transparent;
+    /* offset so it visually starts after the day head */
   }
   .day-empty-hint {
     text-align: left;

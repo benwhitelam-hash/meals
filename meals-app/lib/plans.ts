@@ -31,9 +31,16 @@ export interface PlanEntry {
   notes?: string;
 }
 
+export interface PlanActivity {
+  day: DayCode;
+  text: string;
+  notes?: string;
+}
+
 export interface MealPlan {
   week_start: string; // ISO date YYYY-MM-DD
   entries: PlanEntry[];
+  activities: PlanActivity[];
   created_at: string;
   updated_at: string;
   updated_by: string;
@@ -50,6 +57,11 @@ async function ensureSchema(): Promise<void> {
       updated_at  timestamptz NOT NULL DEFAULT now(),
       updated_by  text NOT NULL
     )
+  `;
+  // Activities column added later — idempotent ALTER for existing deployments.
+  await sql()`
+    ALTER TABLE meal_plans
+    ADD COLUMN IF NOT EXISTS activities jsonb NOT NULL DEFAULT '[]'::jsonb
   `;
   _migrated = true;
 }
@@ -116,7 +128,11 @@ export function weekRangeLabel(weekStart: string): string {
 export async function getPlan(weekStart: string): Promise<MealPlan | null> {
   await ensureSchema();
   const rows = await sql()`
-    SELECT week_start::text AS week_start, entries, created_at, updated_at, updated_by
+    SELECT
+      week_start::text AS week_start,
+      entries,
+      COALESCE(activities, '[]'::jsonb) AS activities,
+      created_at, updated_at, updated_by
     FROM meal_plans
     WHERE week_start = ${weekStart}::date
   `;
@@ -126,6 +142,7 @@ export async function getPlan(weekStart: string): Promise<MealPlan | null> {
 /**
  * Replace the entire week's entries. Used by propose_meal_plan and the API.
  * Upsert pattern — creates the row if missing.
+ * Note: this only touches `entries`, not `activities` (those have their own setters).
  */
 export async function setPlan(
   weekStart: string,
@@ -143,7 +160,11 @@ export async function setPlan(
       entries = EXCLUDED.entries,
       updated_at = now(),
       updated_by = EXCLUDED.updated_by
-    RETURNING week_start::text AS week_start, entries, created_at, updated_at, updated_by
+    RETURNING
+      week_start::text AS week_start,
+      entries,
+      COALESCE(activities, '[]'::jsonb) AS activities,
+      created_at, updated_at, updated_by
   `;
   return rows[0] as MealPlan;
 }
@@ -185,6 +206,79 @@ function sanitiseEntries(entries: PlanEntry[]): PlanEntry[] {
   });
 }
 
+/** Same idea for activities — one per day, dedupe, drop blanks. */
+function sanitiseActivities(activities: PlanActivity[]): PlanActivity[] {
+  const seen = new Set<DayCode>();
+  return activities.filter((a) => {
+    if (!ALL_DAYS.includes(a.day)) return false;
+    if (seen.has(a.day)) return false;
+    if (!a.text?.trim()) return false;
+    seen.add(a.day);
+    return true;
+  });
+}
+
+/**
+ * Set or replace the activity for a single day.
+ * Creates the plan row if missing (with empty entries, just this activity).
+ */
+export async function setActivity(
+  weekStart: string,
+  day: DayCode,
+  activity: Omit<PlanActivity, 'day'>,
+  updatedBy: string
+): Promise<MealPlan> {
+  await ensureSchema();
+  const existing = await getPlan(weekStart);
+  const currentActivities = existing?.activities ?? [];
+  const filtered = currentActivities.filter((a) => a.day !== day);
+  filtered.push({ ...activity, day });
+  const cleaned = sanitiseActivities(filtered);
+  const json = JSON.stringify(cleaned);
+
+  const rows = await sql()`
+    INSERT INTO meal_plans (week_start, entries, activities, updated_by)
+    VALUES (${weekStart}::date, '[]'::jsonb, ${json}::jsonb, ${updatedBy})
+    ON CONFLICT (week_start)
+    DO UPDATE SET
+      activities = EXCLUDED.activities,
+      updated_at = now(),
+      updated_by = EXCLUDED.updated_by
+    RETURNING
+      week_start::text AS week_start,
+      entries,
+      COALESCE(activities, '[]'::jsonb) AS activities,
+      created_at, updated_at, updated_by
+  `;
+  return rows[0] as MealPlan;
+}
+
+export async function clearActivity(
+  weekStart: string,
+  day: DayCode,
+  updatedBy: string
+): Promise<MealPlan | null> {
+  await ensureSchema();
+  const existing = await getPlan(weekStart);
+  if (!existing) return null;
+  const filtered = existing.activities.filter((a) => a.day !== day);
+  const json = JSON.stringify(filtered);
+
+  const rows = await sql()`
+    UPDATE meal_plans
+    SET activities = ${json}::jsonb,
+        updated_at = now(),
+        updated_by = ${updatedBy}
+    WHERE week_start = ${weekStart}::date
+    RETURNING
+      week_start::text AS week_start,
+      entries,
+      COALESCE(activities, '[]'::jsonb) AS activities,
+      created_at, updated_at, updated_by
+  `;
+  return (rows[0] as MealPlan) ?? null;
+}
+
 // --------------------------------------------------------------------------
 // Prompt formatter — used by the chat to know what the current plan looks like
 // --------------------------------------------------------------------------
@@ -198,23 +292,35 @@ export function planForPrompt(
   weekStart: string,
   recipeNames: RecipeNameLookup
 ): string {
-  if (!plan || plan.entries.length === 0) {
+  const hasMeals = plan && plan.entries.length > 0;
+  const hasActivities = plan && plan.activities.length > 0;
+  if (!plan || (!hasMeals && !hasActivities)) {
     return `Plan for week starting ${weekStart}: (empty)`;
   }
   const lines = [`Plan for week starting ${weekStart}:`];
   for (const day of ALL_DAYS) {
     const entry = plan.entries.find((e) => e.day === day);
+    const activity = plan.activities.find((a) => a.day === day);
+
+    let mealLine: string;
     if (!entry) {
-      lines.push(`- ${DAY_LABELS[day]}: —`);
-      continue;
+      mealLine = '—';
+    } else {
+      const main =
+        entry.kind === 'recipe'
+          ? `${recipeNames[entry.recipe_id!] ?? '(unknown recipe)'}` +
+            (entry.recipe_id ? ` [recipe id: ${entry.recipe_id}]` : '')
+          : `"${entry.text}"`;
+      const notes = entry.notes ? ` — ${entry.notes}` : '';
+      mealLine = `${main}${notes}`;
     }
-    const main =
-      entry.kind === 'recipe'
-        ? `${recipeNames[entry.recipe_id!] ?? '(unknown recipe)'}` +
-          (entry.recipe_id ? ` [recipe id: ${entry.recipe_id}]` : '')
-        : `"${entry.text}"`;
-    const notes = entry.notes ? ` — ${entry.notes}` : '';
-    lines.push(`- ${DAY_LABELS[day]}: ${main}${notes}`);
+
+    let line = `- ${DAY_LABELS[day]}: ${mealLine}`;
+    if (activity) {
+      const actNotes = activity.notes ? ` (${activity.notes})` : '';
+      line += `  [activity: ${activity.text}${actNotes}]`;
+    }
+    lines.push(line);
   }
   return lines.join('\n');
 }

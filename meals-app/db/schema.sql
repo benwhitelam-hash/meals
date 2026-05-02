@@ -66,3 +66,9 @@ CREATE TABLE IF NOT EXISTS shopping_list_items (
 
 CREATE INDEX IF NOT EXISTS shopping_lists_active_idx ON shopping_lists (completed_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS shopping_list_items_list_idx ON shopping_list_items (list_id);
+
+-- Activities column added to meal_plans (May 2026)
+-- Auto-applied via lib/plans.ts ALTER TABLE ADD COLUMN IF NOT EXISTS
+
+ALTER TABLE meal_plans
+  ADD COLUMN IF NOT EXISTS activities jsonb NOT NULL DEFAULT '[]'::jsonb;

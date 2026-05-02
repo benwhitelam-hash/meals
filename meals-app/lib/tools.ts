@@ -248,6 +248,59 @@ export const CLEAR_MEAL_PLAN_ENTRY_TOOL: Anthropic.Tool = {
   },
 };
 
+export const SET_PLAN_ACTIVITY_TOOL: Anthropic.Tool = {
+  name: 'set_plan_activity',
+  description:
+    "Note an evening activity for a particular day in the plan, e.g. 'Tuesday: book club at 8pm', " +
+    "'Thursday: gym, want something quick'. Activities sit alongside meals and help with planning " +
+    "(early dinners, leftovers, takeaway days). REPLACES any existing activity on that day. " +
+    "Use only for things happening in the evening that affect dinner planning — don't capture " +
+    "general daytime events.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      week_start: {
+        type: 'string',
+        description: 'ISO date YYYY-MM-DD of the Monday of the target week.',
+      },
+      day: {
+        type: 'string',
+        enum: [...DAY_ENUM],
+      },
+      text: {
+        type: 'string',
+        description:
+          "Short activity description (e.g. 'book club', 'gym 6pm', 'late meeting'). Keep concise.",
+      },
+      notes: {
+        type: 'string',
+        description: "Optional extra context, e.g. 'eating before' or 'need 30min meal'.",
+      },
+    },
+    required: ['week_start', 'day', 'text'],
+  },
+};
+
+export const CLEAR_PLAN_ACTIVITY_TOOL: Anthropic.Tool = {
+  name: 'clear_plan_activity',
+  description:
+    "Remove the activity note from a single day. Use when the user says an activity is cancelled " +
+    "or no longer relevant.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      week_start: {
+        type: 'string',
+      },
+      day: {
+        type: 'string',
+        enum: [...DAY_ENUM],
+      },
+    },
+    required: ['week_start', 'day'],
+  },
+};
+
 // =================================================================
 // Shopping list tools
 // =================================================================
@@ -322,6 +375,8 @@ export const ALL_TOOLS = [
   PROPOSE_MEAL_PLAN_TOOL,
   SET_MEAL_PLAN_ENTRY_TOOL,
   CLEAR_MEAL_PLAN_ENTRY_TOOL,
+  SET_PLAN_ACTIVITY_TOOL,
+  CLEAR_PLAN_ACTIVITY_TOOL,
   GENERATE_SHOPPING_LIST_TOOL,
   ADD_TO_SHOPPING_LIST_TOOL,
   COMPLETE_SHOPPING_LIST_TOOL,

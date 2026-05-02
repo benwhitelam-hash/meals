@@ -23,6 +23,8 @@ import {
   setPlan,
   setEntry,
   clearEntry,
+  setActivity,
+  clearActivity,
   planForPrompt,
   mondayOf,
   shiftWeeks,
@@ -77,6 +79,8 @@ interface ChatAction {
     | 'plan_set'
     | 'plan_entry_set'
     | 'plan_entry_cleared'
+    | 'plan_activity_set'
+    | 'plan_activity_cleared'
     | 'shopping_list_generated'
     | 'shopping_item_added'
     | 'shopping_completed';
@@ -87,6 +91,7 @@ interface ChatAction {
   added_count?: number;
   week_start?: string;
   day?: DayCode;
+  text?: string;
   id?: string;
 }
 
@@ -124,6 +129,7 @@ function buildSystemPrompt(
     '- If a request conflicts with the household preferences below, gently flag it.',
     "- When suggesting meals, prefer recipes from the saved collection if any fit — they're trusted favourites.",
     '- When the user asks to plan the week, use propose_meal_plan. When they want to swap a single day, use set_meal_plan_entry. When they\'re out a day, use clear_meal_plan_entry.',
+    '- When the user mentions an evening activity that affects dinner planning (book club, gym, late meeting, dinner out), use set_plan_activity to note it on that day so future planning accounts for it. Use clear_plan_activity if they cancel.',
     '- When the user asks for a shopping list from a planned week, use generate_shopping_list. When they want to add things to the current list mid-week, use add_to_shopping_list. When they\'ve finished shopping, use complete_shopping_list.',
     '',
     'Date context:',
@@ -487,6 +493,80 @@ export async function POST(request: Request) {
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'unknown';
               resultText = `error clearing entry: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'set_plan_activity') {
+          const input = tu.input as {
+            week_start?: string;
+            day?: DayCode;
+            text?: string;
+            notes?: string;
+          };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day) ||
+            !input.text?.trim()
+          ) {
+            resultText = 'error: week_start, day, and text required';
+            isError = true;
+          } else {
+            try {
+              const plan = await setActivity(
+                input.week_start,
+                input.day,
+                {
+                  text: input.text.trim(),
+                  ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+                },
+                username
+              );
+              chatActions.push({
+                type: 'plan_activity_set',
+                plan,
+                week_start: input.week_start,
+                day: input.day,
+                text: input.text.trim(),
+              });
+              resultText = `Noted ${input.day} activity on week ${input.week_start}: "${input.text.trim()}"`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error setting activity: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'clear_plan_activity') {
+          const input = tu.input as { week_start?: string; day?: DayCode };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day)
+          ) {
+            resultText = 'error: week_start and day required';
+            isError = true;
+          } else {
+            try {
+              const plan = await clearActivity(
+                input.week_start,
+                input.day,
+                username
+              );
+              if (!plan) {
+                resultText = 'no plan exists for that week — nothing to clear';
+                isError = true;
+              } else {
+                chatActions.push({
+                  type: 'plan_activity_cleared',
+                  plan,
+                  week_start: input.week_start,
+                  day: input.day,
+                });
+                resultText = `Cleared ${input.day} activity on week ${input.week_start}`;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error clearing activity: ${msg}`;
               isError = true;
             }
           }
