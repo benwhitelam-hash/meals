@@ -29,3 +29,14 @@ CREATE TABLE IF NOT EXISTS recipes (
 );
 
 CREATE INDEX IF NOT EXISTS recipes_recent_idx ON recipes (updated_at DESC);
+
+-- Meal plans — one row per week, entries as JSONB
+-- Auto-created by lib/plans.ts on first query
+
+CREATE TABLE IF NOT EXISTS meal_plans (
+  week_start  date PRIMARY KEY,
+  entries     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  updated_by  text NOT NULL
+);

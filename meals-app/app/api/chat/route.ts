@@ -18,6 +18,20 @@ import {
   deleteRecipe,
   type Recipe,
 } from '@/lib/recipes';
+import {
+  getPlan,
+  setPlan,
+  setEntry,
+  clearEntry,
+  planForPrompt,
+  mondayOf,
+  shiftWeeks,
+  type DayCode,
+  type EntryKind,
+  type MealPlan,
+  type PlanEntry,
+  ALL_DAYS,
+} from '@/lib/plans';
 import { ALL_TOOLS } from '@/lib/tools';
 import { extractAndSave, extractIngredients } from '@/lib/extract';
 
@@ -50,17 +64,40 @@ interface ChatAction {
     | 'forgot'
     | 'recipe_saved'
     | 'recipe_updated'
-    | 'recipe_deleted';
+    | 'recipe_deleted'
+    | 'plan_set'
+    | 'plan_entry_set'
+    | 'plan_entry_cleared';
   memory?: Memory;
   recipe?: Recipe;
+  plan?: MealPlan;
+  week_start?: string;
+  day?: DayCode;
   id?: string;
 }
 
 function buildSystemPrompt(
   prefs: Preferences = {},
   memories: Memory[],
-  recipes: Recipe[]
+  recipes: Recipe[],
+  thisWeekStart: string,
+  thisWeekPlan: MealPlan | null,
+  nextWeekStart: string,
+  nextWeekPlan: MealPlan | null
 ): string {
+  // Today as a long-form English date
+  const today = new Date();
+  const todayLabel = today.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  // Recipe id -> name lookup for the plan formatter
+  const recipeNames: Record<string, string> = {};
+  for (const r of recipes) recipeNames[r.id] = r.name;
+
   const parts: string[] = [
     "You are the household's personal meal-planning assistant. You help with recipe ideas, weekly meal plans, shopping lists, and answering cooking questions.",
     '',
@@ -70,7 +107,14 @@ function buildSystemPrompt(
     '- For meal ideas, suggest 3-5 options with a one-line pitch each. Ask before going deeper unless the user has been specific.',
     '- Use British English (courgette, aubergine, coriander) and metric/imperial as appropriate for UK cooking.',
     '- If a request conflicts with the household preferences below, gently flag it.',
-    '- When suggesting meals, prefer recipes from the saved collection if any fit — they\'re trusted favourites.',
+    "- When suggesting meals, prefer recipes from the saved collection if any fit — they're trusted favourites.",
+    '- When the user asks to plan the week, use propose_meal_plan. When they want to swap a single day, use set_meal_plan_entry. When they\'re out a day, use clear_meal_plan_entry.',
+    '',
+    'Date context:',
+    `- Today is ${todayLabel}.`,
+    `- This week (Mon-Sun) starts: ${thisWeekStart}.`,
+    `- Next week starts: ${nextWeekStart}.`,
+    '- When tools need a week_start, pass one of those ISO dates exactly.',
     '',
     'Household context:',
     `- ${prefs.household?.trim() || 'A household of 2 adults, in the UK.'}`,
@@ -81,17 +125,23 @@ function buildSystemPrompt(
   if (prefs.equipment?.trim()) parts.push(`- Kitchen equipment available: ${prefs.equipment.trim()}`);
   if (prefs.notes?.trim()) parts.push(`- Other notes: ${prefs.notes.trim()}`);
 
-  // Memories section
+  // Memories
   parts.push(memoriesForPrompt(memories));
-
-  // Memory IDs for forget_meal targeting
   if (memories.length) {
     parts.push('Memory IDs (only used for the forget_meal tool):');
     for (const m of memories) parts.push(`- ${m.id}: ${m.content}`);
   }
 
-  // Recipes section (already includes IDs and full bodies)
+  // Recipes (full bodies)
   parts.push(recipesForPrompt(recipes));
+
+  // Current and next week's plans
+  parts.push('');
+  parts.push('## Current meal plans');
+  parts.push('');
+  parts.push(planForPrompt(thisWeekPlan, thisWeekStart, recipeNames));
+  parts.push('');
+  parts.push(planForPrompt(nextWeekPlan, nextWeekStart, recipeNames));
 
   return parts.join('\n');
 }
@@ -124,18 +174,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No messages' }, { status: 400 });
   }
 
-  // Load current memories and recipes for prompt + tool context
+  // Load current memories, recipes, and plans for prompt + tool context
+  const thisWeekStart = mondayOf();
+  const nextWeekStart = shiftWeeks(thisWeekStart, 1);
+
   let memories: Memory[] = [];
   let recipes: Recipe[] = [];
+  let thisWeekPlan: MealPlan | null = null;
+  let nextWeekPlan: MealPlan | null = null;
   try {
-    [memories, recipes] = await Promise.all([listMemories(), listRecipes()]);
+    [memories, recipes, thisWeekPlan, nextWeekPlan] = await Promise.all([
+      listMemories(),
+      listRecipes(),
+      getPlan(thisWeekStart),
+      getPlan(nextWeekStart),
+    ]);
   } catch (e) {
-    console.error('[chat] could not load memories/recipes:', e);
+    console.error('[chat] could not load context:', e);
     // Don't fail the chat — degrade gracefully
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const systemPrompt = buildSystemPrompt(preferences, memories, recipes);
+  const systemPrompt = buildSystemPrompt(
+    preferences,
+    memories,
+    recipes,
+    thisWeekStart,
+    thisWeekPlan,
+    nextWeekStart,
+    nextWeekPlan
+  );
 
   // Build the running message array. We mutate this across tool-use rounds.
   const apiMessages: Anthropic.MessageParam[] = incomingMessages.map((m) => ({
@@ -300,6 +368,100 @@ export async function POST(request: Request) {
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'unknown';
               resultText = `error deleting recipe: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'propose_meal_plan') {
+          const input = tu.input as { week_start?: string; entries?: PlanEntry[] };
+          if (!input.week_start || !Array.isArray(input.entries)) {
+            resultText = 'error: week_start and entries required';
+            isError = true;
+          } else {
+            try {
+              const plan = await setPlan(input.week_start, input.entries, username);
+              chatActions.push({
+                type: 'plan_set',
+                plan,
+                week_start: input.week_start,
+              });
+              resultText = `Saved plan for week starting ${input.week_start} with ${plan.entries.length} entries`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error saving plan: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'set_meal_plan_entry') {
+          const input = tu.input as {
+            week_start?: string;
+            day?: DayCode;
+            kind?: EntryKind;
+            recipe_id?: string;
+            text?: string;
+            notes?: string;
+          };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day) ||
+            !input.kind
+          ) {
+            resultText = 'error: week_start, day, and kind required';
+            isError = true;
+          } else if (input.kind === 'recipe' && !input.recipe_id) {
+            resultText = 'error: recipe_id required when kind=recipe';
+            isError = true;
+          } else if (input.kind === 'freetext' && !input.text?.trim()) {
+            resultText = 'error: text required when kind=freetext';
+            isError = true;
+          } else {
+            try {
+              const plan = await setEntry(
+                input.week_start,
+                input.day,
+                {
+                  kind: input.kind,
+                  ...(input.recipe_id ? { recipe_id: input.recipe_id } : {}),
+                  ...(input.text ? { text: input.text.trim() } : {}),
+                  ...(input.notes ? { notes: input.notes.trim() } : {}),
+                },
+                username
+              );
+              chatActions.push({
+                type: 'plan_entry_set',
+                plan,
+                week_start: input.week_start,
+                day: input.day,
+              });
+              resultText = `Set ${input.day} on week ${input.week_start}`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error setting entry: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'clear_meal_plan_entry') {
+          const input = tu.input as { week_start?: string; day?: DayCode };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day)
+          ) {
+            resultText = 'error: week_start and day required';
+            isError = true;
+          } else {
+            try {
+              const plan = await clearEntry(input.week_start, input.day, username);
+              chatActions.push({
+                type: 'plan_entry_cleared',
+                plan,
+                week_start: input.week_start,
+                day: input.day,
+              });
+              resultText = `Cleared ${input.day} on week ${input.week_start}`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error clearing entry: ${msg}`;
               isError = true;
             }
           }

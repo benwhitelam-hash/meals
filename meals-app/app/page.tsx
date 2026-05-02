@@ -31,9 +31,14 @@ interface ChatAction {
     | 'forgot'
     | 'recipe_saved'
     | 'recipe_updated'
-    | 'recipe_deleted';
+    | 'recipe_deleted'
+    | 'plan_set'
+    | 'plan_entry_set'
+    | 'plan_entry_cleared';
   memory?: Memory;
   recipe?: Recipe;
+  week_start?: string;
+  day?: string;
   id?: string;
 }
 
@@ -408,13 +413,48 @@ function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
             </span>
           );
         }
+        if (a.type === 'plan_set') {
+          return (
+            <a
+              key={i}
+              href="/plan"
+              className="memory-pill kind-plan"
+              title="View plan"
+            >
+              <PillIcon name="calendar" />
+              Saved plan for week of {formatShortDate(a.week_start)}
+            </a>
+          );
+        }
+        if (a.type === 'plan_entry_set') {
+          return (
+            <a
+              key={i}
+              href="/plan"
+              className="memory-pill kind-plan"
+              title="View plan"
+            >
+              <PillIcon name="calendar" />
+              Set {capitalise(a.day || '')} on week of{' '}
+              {formatShortDate(a.week_start)}
+            </a>
+          );
+        }
+        if (a.type === 'plan_entry_cleared') {
+          return (
+            <span key={i} className="memory-pill kind-forgot">
+              <PillIcon name="calendar" />
+              Cleared {capitalise(a.day || '')}
+            </span>
+          );
+        }
         return null;
       })}
     </div>
   );
 }
 
-function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' }) {
+function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'calendar' }) {
   if (name === 'bookmark')
     return (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -440,7 +480,33 @@ function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' }) {
         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z" />
       </svg>
     );
+  if (name === 'calendar')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+        <line x1="16" y1="2" x2="16" y2="6" strokeLinecap="round" />
+        <line x1="8" y1="2" x2="8" y2="6" strokeLinecap="round" />
+        <line x1="3" y1="10" x2="21" y2="10" />
+      </svg>
+    );
   return null;
+}
+
+function formatShortDate(iso?: string): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function capitalise(s: string): string {
+  if (!s) return '';
+  return s[0].toUpperCase() + s.slice(1);
 }
 
 function PreferencesDrawer({
