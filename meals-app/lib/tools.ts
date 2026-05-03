@@ -301,6 +301,98 @@ export const CLEAR_PLAN_ACTIVITY_TOOL: Anthropic.Tool = {
   },
 };
 
+export const SET_MEAL_PREP_AHEAD_TOOL: Anthropic.Tool = {
+  name: 'set_meal_prep_ahead',
+  description:
+    "Flag that the meal on a given day needs prep done ahead of time (the day before by default). " +
+    "Use when a planned meal genuinely needs lead time — e.g. soaking pulses overnight, marinating, " +
+    "defrosting from the freezer, sourdough starter, slow-cooker prep, taking meat out the night before. " +
+    "Especially useful when a busy evening means dinner has to be quick — flag prep on the previous, calmer day. " +
+    "Only call when there's already a meal entry on that day; the prep flag attaches to it. " +
+    "REPLACES any existing prep flag on that day. Keep `text` short and action-oriented.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      week_start: {
+        type: 'string',
+        description: 'ISO date YYYY-MM-DD of the Monday of the target week.',
+      },
+      day: {
+        type: 'string',
+        enum: [...DAY_ENUM],
+        description: 'The day the MEAL is for (not the prep day). Prep is shown on the day before.',
+      },
+      text: {
+        type: 'string',
+        description:
+          "Short imperative reminder. E.g. 'Take chicken out of freezer', 'Soak chickpeas overnight', " +
+          "'Marinate the lamb', 'Start the sourdough'. Keep under 12 words.",
+      },
+      days_before: {
+        type: 'integer',
+        description:
+          'How many days before the meal the prep should happen. Default 1 (i.e. the night before). ' +
+          'Use 2 for things like sourdough or slow-marinades. Range 1-3.',
+        minimum: 1,
+        maximum: 3,
+      },
+    },
+    required: ['week_start', 'day', 'text'],
+  },
+};
+
+export const CLEAR_MEAL_PREP_AHEAD_TOOL: Anthropic.Tool = {
+  name: 'clear_meal_prep_ahead',
+  description:
+    "Remove the prep-ahead flag from a meal entry. The meal itself stays — only the prep reminder is cleared.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      week_start: { type: 'string' },
+      day: { type: 'string', enum: [...DAY_ENUM] },
+    },
+    required: ['week_start', 'day'],
+  },
+};
+
+// =================================================================
+// Feedback tool — captures feature ideas / UX suggestions
+// =================================================================
+
+export const SUBMIT_FEEDBACK_TOOL: Anthropic.Tool = {
+  name: 'submit_feedback',
+  description:
+    "Capture a feature idea, UX improvement, or bug report from the user about the app itself " +
+    "(NOT a household preference about food — those go to remember_meal). Trigger when the user says " +
+    "things like 'it'd be useful if...', 'I wish I could...', 'this would be better if...', " +
+    "'I noticed a bug where...', or 'add a feature to...'. " +
+    "These are stored centrally and viewable on the /feedback page. " +
+    "Confirm capture briefly to the user (e.g. 'Noted — saved that as an idea.') and don't follow up unless asked. " +
+    "Infer the area from context; ask the user if genuinely ambiguous.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      content: {
+        type: 'string',
+        description:
+          "The idea or feedback in a clear, self-contained sentence or two. Rewrite the user's words " +
+          "into something that will make sense out of context — someone reading the /feedback page later " +
+          "shouldn't need the surrounding chat to understand. Preserve the user's intent and tone.",
+      },
+      area: {
+        type: 'string',
+        enum: ['meals', 'recipes', 'plan', 'shopping', 'general'],
+        description:
+          "Which part of the app the feedback relates to. " +
+          "'meals' = the chat itself. 'recipes' = the recipe collection page. " +
+          "'plan' = the week planner. 'shopping' = the shopping list. " +
+          "'general' = cross-cutting / unsure / outside the meals app.",
+      },
+    },
+    required: ['content', 'area'],
+  },
+};
+
 // =================================================================
 // Shopping list tools
 // =================================================================
@@ -377,7 +469,10 @@ export const ALL_TOOLS = [
   CLEAR_MEAL_PLAN_ENTRY_TOOL,
   SET_PLAN_ACTIVITY_TOOL,
   CLEAR_PLAN_ACTIVITY_TOOL,
+  SET_MEAL_PREP_AHEAD_TOOL,
+  CLEAR_MEAL_PREP_AHEAD_TOOL,
   GENERATE_SHOPPING_LIST_TOOL,
   ADD_TO_SHOPPING_LIST_TOOL,
   COMPLETE_SHOPPING_LIST_TOOL,
+  SUBMIT_FEEDBACK_TOOL,
 ];

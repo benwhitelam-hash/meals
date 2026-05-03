@@ -37,11 +37,15 @@ interface ChatAction {
     | 'plan_entry_cleared'
     | 'plan_activity_set'
     | 'plan_activity_cleared'
+    | 'plan_prep_set'
+    | 'plan_prep_cleared'
     | 'shopping_list_generated'
     | 'shopping_item_added'
-    | 'shopping_completed';
+    | 'shopping_completed'
+    | 'feedback_submitted';
   memory?: Memory;
   recipe?: Recipe;
+  feedback?: { id: string; area: string; content: string };
   added_count?: number;
   week_start?: string;
   day?: string;
@@ -535,6 +539,28 @@ function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
             </span>
           );
         }
+        if (a.type === 'plan_prep_set') {
+          return (
+            <a
+              key={i}
+              href="/plan"
+              className="memory-pill kind-plan"
+              title="View plan"
+            >
+              <PillIcon name="pin" />
+              Prep flag on {capitalise(a.day || '')}
+              {a.text ? `: ${a.text}` : ''}
+            </a>
+          );
+        }
+        if (a.type === 'plan_prep_cleared') {
+          return (
+            <span key={i} className="memory-pill kind-forgot">
+              <PillIcon name="pin" />
+              Cleared prep flag on {capitalise(a.day || '')}
+            </span>
+          );
+        }
         if (a.type === 'shopping_list_generated') {
           return (
             <a
@@ -570,13 +596,30 @@ function ChatActionsRow({ actions }: { actions: ChatAction[] }) {
             </span>
           );
         }
+        if (a.type === 'feedback_submitted' && a.feedback) {
+          return (
+            <a
+              key={i}
+              href="/feedback"
+              className="memory-pill kind-feedback"
+              title="View feedback"
+            >
+              <PillIcon name="lightbulb" />
+              Saved idea ({a.feedback.area})
+            </a>
+          );
+        }
         return null;
       })}
     </div>
   );
 }
 
-function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'calendar' | 'basket' }) {
+function PillIcon({
+  name,
+}: {
+  name: 'bookmark' | 'trash' | 'book' | 'edit' | 'calendar' | 'basket' | 'pin' | 'lightbulb';
+}) {
   if (name === 'bookmark')
     return (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -616,6 +659,25 @@ function PillIcon({ name }: { name: 'bookmark' | 'trash' | 'book' | 'edit' | 'ca
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path
           d="M5 7l1 14h12l1-14M9 7V5a3 3 0 0 1 6 0v2M3 7h18"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  if (name === 'pin')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path
+          d="M12 2l4 6 6 1-4.5 4 1 6-6.5-3-6.5 3 1-6L2 9l6-1z"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  if (name === 'lightbulb')
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path
+          d="M9 21h6M10 17h4M8 13a4 4 0 1 1 8 0c0 1.5-.7 2.7-1.6 3.5-.6.5-1 1-1 1.5h-2.8c0-.5-.4-1-1-1.5C8.7 15.7 8 14.5 8 13z"
           strokeLinecap="round"
           strokeLinejoin="round"
         />

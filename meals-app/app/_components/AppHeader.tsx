@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { CrocMark } from '../croc';
@@ -13,6 +13,27 @@ interface AppHeaderProps {
   onOpenPrefs?: () => void;
 }
 
+interface PersonalApp {
+  key: string;
+  name: string;
+  href: string;
+  status: 'live' | 'soon';
+  icon: string; // emoji-style label
+}
+
+const PERSONAL_APPS: PersonalApp[] = [
+  { key: 'meals', name: 'Meals', href: 'https://meals.pinkcrocodile.dev', status: 'live', icon: '🍳' },
+  { key: 'books', name: 'Books', href: '#', status: 'soon', icon: '📚' },
+  { key: 'budget', name: 'Budget', href: '#', status: 'soon', icon: '💰' },
+];
+
+const PRIMARY_NAV = [
+  { href: '/', label: 'Meals' },
+  { href: '/recipes', label: 'Recipes' },
+  { href: '/plan', label: 'Plan' },
+  { href: '/shopping', label: 'Shopping' },
+];
+
 export function AppHeader({
   showMemoryButton = false,
   memoryCount = 0,
@@ -20,7 +41,9 @@ export function AppHeader({
   onOpenPrefs,
 }: AppHeaderProps) {
   const [me, setMe] = useState<string | null>(null);
+  const [appsOpen, setAppsOpen] = useState(false);
   const pathname = usePathname();
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch('/api/me')
@@ -28,6 +51,28 @@ export function AppHeader({
       .then((d) => setMe(d.user))
       .catch(() => setMe(null));
   }, []);
+
+  // Close dropdown on outside click + Escape
+  useEffect(() => {
+    if (!appsOpen) return;
+    function onClick(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setAppsOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setAppsOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [appsOpen]);
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -39,30 +84,99 @@ export function AppHeader({
 
   return (
     <header className="app-header">
-      <Link href="/" className="brand" aria-label="Pink Crocodile">
-        <CrocMark size={28} />
-        <span className="brand-name">pink crocodile</span>
-      </Link>
+      <div className="brand-wrap" ref={dropdownRef}>
+        <button
+          type="button"
+          className={`brand brand-button ${appsOpen ? 'is-open' : ''}`}
+          aria-haspopup="menu"
+          aria-expanded={appsOpen}
+          aria-label="Pink Crocodile — switch apps"
+          onClick={() => setAppsOpen((v) => !v)}
+        >
+          <CrocMark size={28} />
+          <span className="brand-name">pink crocodile</span>
+          <svg
+            className="brand-chevron"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {appsOpen && (
+          <div className="apps-menu" role="menu">
+            <div className="apps-menu-eyebrow">Personal apps</div>
+            {PERSONAL_APPS.map((app) => {
+              const isCurrent = app.key === 'meals';
+              const isPlaceholder = app.status === 'soon';
+              return (
+                <a
+                  key={app.key}
+                  href={isPlaceholder ? undefined : app.href}
+                  className={`apps-menu-item ${isCurrent ? 'is-current' : ''} ${
+                    isPlaceholder ? 'is-disabled' : ''
+                  }`}
+                  role="menuitem"
+                  aria-disabled={isPlaceholder || undefined}
+                  onClick={(e) => {
+                    if (isPlaceholder) {
+                      e.preventDefault();
+                      return;
+                    }
+                    setAppsOpen(false);
+                  }}
+                >
+                  <span className="apps-menu-icon" aria-hidden="true">
+                    {app.icon}
+                  </span>
+                  <span className="apps-menu-name">{app.name}</span>
+                  {isCurrent && <span className="apps-menu-tag">current</span>}
+                  {isPlaceholder && <span className="apps-menu-tag soon">soon</span>}
+                </a>
+              );
+            })}
+            <div className="apps-menu-rule" role="separator" />
+            <Link
+              href="/feedback"
+              className="apps-menu-item apps-menu-feedback"
+              role="menuitem"
+              onClick={() => setAppsOpen(false)}
+            >
+              <span className="apps-menu-icon" aria-hidden="true">
+                💡
+              </span>
+              <span className="apps-menu-name">Suggest a feature</span>
+            </Link>
+            <a
+              href="https://pinkcrocodile.dev"
+              className="apps-menu-item apps-menu-foot"
+              role="menuitem"
+              onClick={() => setAppsOpen(false)}
+            >
+              <span className="apps-menu-icon" aria-hidden="true">
+                🏡
+              </span>
+              <span className="apps-menu-name">pinkcrocodile.dev</span>
+            </a>
+          </div>
+        )}
+      </div>
 
-      <nav className="app-nav" aria-label="Primary">
-        <Link href="/" className={`nav-link ${isActive('/') ? 'active' : ''}`}>
-          Meals
-        </Link>
-        <Link
-          href="/recipes"
-          className={`nav-link ${isActive('/recipes') ? 'active' : ''}`}
-        >
-          Recipes
-        </Link>
-        <Link href="/plan" className={`nav-link ${isActive('/plan') ? 'active' : ''}`}>
-          Plan
-        </Link>
-        <Link
-          href="/shopping"
-          className={`nav-link ${isActive('/shopping') ? 'active' : ''}`}
-        >
-          Shopping
-        </Link>
+      <nav className="app-nav-wrap" aria-label="Primary">
+        <div className="app-nav">
+          {PRIMARY_NAV.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`nav-link ${isActive(item.href) ? 'active' : ''}`}
+            >
+              {item.label}
+            </Link>
+          ))}
+        </div>
       </nav>
 
       <div className="user-menu">
@@ -100,7 +214,7 @@ export function AppHeader({
             </svg>
           </button>
         )}
-        <button className="btn btn-ghost" onClick={logout} title="Sign out">
+        <button className="btn btn-ghost btn-signout" onClick={logout} title="Sign out">
           Sign out
         </button>
       </div>

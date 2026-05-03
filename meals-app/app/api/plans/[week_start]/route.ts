@@ -8,10 +8,13 @@ import {
   clearEntry,
   setActivity,
   clearActivity,
+  setMealPrepAhead,
+  clearMealPrepAhead,
   ALL_DAYS,
   type DayCode,
   type EntryKind,
   type PlanEntry,
+  type PrepAhead,
 } from '@/lib/plans';
 
 export const runtime = 'nodejs';
@@ -98,11 +101,19 @@ export async function PATCH(
 
   let body: {
     day?: DayCode;
-    action?: 'set' | 'clear' | 'set_activity' | 'clear_activity';
+    action?:
+      | 'set'
+      | 'clear'
+      | 'set_activity'
+      | 'clear_activity'
+      | 'set_prep'
+      | 'clear_prep';
     kind?: EntryKind;
     recipe_id?: string;
     text?: string;
     notes?: string;
+    prep_ahead?: PrepAhead | null;
+    days_before?: number;
   };
   try {
     body = await request.json();
@@ -129,6 +140,13 @@ export async function PATCH(
       if (body.kind === 'freetext' && !body.text?.trim()) {
         return NextResponse.json({ error: 'text required' }, { status: 400 });
       }
+      const prep =
+        body.prep_ahead && body.prep_ahead.text?.trim()
+          ? {
+              text: body.prep_ahead.text.trim(),
+              days_before: body.prep_ahead.days_before ?? 1,
+            }
+          : undefined;
       const plan = await setEntry(
         week_start,
         body.day,
@@ -137,6 +155,7 @@ export async function PATCH(
           ...(body.recipe_id ? { recipe_id: body.recipe_id } : {}),
           ...(body.text ? { text: body.text.trim() } : {}),
           ...(body.notes ? { notes: body.notes.trim() } : {}),
+          ...(prep ? { prep_ahead: prep } : {}),
         },
         user
       );
@@ -162,8 +181,35 @@ export async function PATCH(
       if (!plan) return NextResponse.json({ error: 'plan not found' }, { status: 404 });
       return NextResponse.json({ plan });
     }
+    if (body.action === 'set_prep') {
+      if (!body.text?.trim()) {
+        return NextResponse.json({ error: 'text required' }, { status: 400 });
+      }
+      const days = body.days_before ?? 1;
+      const plan = await setMealPrepAhead(
+        week_start,
+        body.day,
+        { text: body.text.trim(), days_before: days },
+        user
+      );
+      if (!plan) {
+        return NextResponse.json(
+          { error: 'no meal entry on that day to attach prep to' },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json({ plan });
+    }
+    if (body.action === 'clear_prep') {
+      const plan = await clearMealPrepAhead(week_start, body.day, user);
+      if (!plan) return NextResponse.json({ error: 'plan not found' }, { status: 404 });
+      return NextResponse.json({ plan });
+    }
     return NextResponse.json(
-      { error: 'action must be set, clear, set_activity, or clear_activity' },
+      {
+        error:
+          'action must be set, clear, set_activity, clear_activity, set_prep, or clear_prep',
+      },
       { status: 400 }
     );
   } catch (e) {

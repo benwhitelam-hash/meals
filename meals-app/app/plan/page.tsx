@@ -29,12 +29,18 @@ const DAY_SHORT: Record<DayCode, string> = {
   sun: 'Sun',
 };
 
+interface PrepAhead {
+  text: string;
+  days_before?: number;
+}
+
 interface PlanEntry {
   day: DayCode;
   kind: 'recipe' | 'freetext';
   recipe_id?: string;
   text?: string;
   notes?: string;
+  prep_ahead?: PrepAhead;
 }
 
 interface PlanActivity {
@@ -232,6 +238,42 @@ export default function PlanPage() {
     }
   }
 
+  async function handleSavePrep(
+    day: DayCode,
+    text: string,
+    days_before: number
+  ) {
+    try {
+      const res = await fetch(`/api/plans/${weekStart}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day, action: 'set_prep', text, days_before }),
+      });
+      if (res.ok) {
+        const { plan: newPlan } = await res.json();
+        setPlan(newPlan);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function handleClearPrep(day: DayCode) {
+    try {
+      const res = await fetch(`/api/plans/${weekStart}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day, action: 'clear_prep' }),
+      });
+      if (res.ok) {
+        const { plan: newPlan } = await res.json();
+        setPlan(newPlan);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <>
       <AppHeader />
@@ -286,6 +328,11 @@ export default function PlanPage() {
               const isThisDay =
                 isoDate(date) === isoDate(new Date());
 
+              // Look up prep that's DUE on this day (for a meal on a later day).
+              // E.g. if Wed has a meal with prep_ahead.days_before=1, the Tuesday cell
+              // shows "prep tonight: ...".
+              const prepDueToday = findPrepDueOnDay(plan, day);
+
               return (
                 <DayCell
                   key={day}
@@ -294,6 +341,7 @@ export default function PlanPage() {
                   entry={entry}
                   activity={activity}
                   recipe={entry?.recipe_id ? recipeById[entry.recipe_id] : undefined}
+                  prepDue={prepDueToday}
                   isPast={isPast}
                   isToday={isThisDay}
                   onClick={() => setEditingDay(day)}
@@ -326,6 +374,10 @@ export default function PlanPage() {
             handleSaveActivity(editingDay, text, notes)
           }
           onClearActivity={() => handleClearActivity(editingDay)}
+          onSavePrep={(text, days_before) =>
+            handleSavePrep(editingDay, text, days_before)
+          }
+          onClearPrep={() => handleClearPrep(editingDay)}
           onCancel={() => setEditingDay(null)}
         />
       )}
@@ -337,12 +389,44 @@ export default function PlanPage() {
 // Day cell
 // --------------------------------------------------------------------------
 
+interface PrepDueInfo {
+  text: string;
+  forDay: DayCode;
+  forMealName: string;
+}
+
+function findPrepDueOnDay(
+  plan: MealPlan | null,
+  day: DayCode
+): PrepDueInfo | null {
+  if (!plan) return null;
+  const dayIdx = ALL_DAYS.indexOf(day);
+  for (const entry of plan.entries) {
+    if (!entry.prep_ahead?.text) continue;
+    const days = entry.prep_ahead.days_before ?? 1;
+    const mealIdx = ALL_DAYS.indexOf(entry.day);
+    if (mealIdx - days === dayIdx) {
+      const mealName =
+        entry.kind === 'recipe'
+          ? '(saved recipe)'
+          : entry.text || '(meal)';
+      return {
+        text: entry.prep_ahead.text,
+        forDay: entry.day,
+        forMealName: mealName,
+      };
+    }
+  }
+  return null;
+}
+
 function DayCell({
   day,
   date,
   entry,
   activity,
   recipe,
+  prepDue,
   isPast,
   isToday,
   onClick,
@@ -352,19 +436,20 @@ function DayCell({
   entry?: PlanEntry;
   activity?: PlanActivity;
   recipe?: Recipe;
+  prepDue?: PrepDueInfo | null;
   isPast: boolean;
   isToday: boolean;
   onClick: () => void;
 }) {
   const dateNum = date.getDate();
   const monthShort = date.toLocaleDateString('en-GB', { month: 'short' });
-  const hasContent = !!entry || !!activity;
+  const hasContent = !!entry || !!activity || !!prepDue;
 
   return (
     <button
       className={`day-cell ${hasContent ? 'filled' : 'empty'} ${isPast ? 'past' : ''} ${
         isToday ? 'today' : ''
-      }`}
+      } ${prepDue ? 'has-prep' : ''}`}
       onClick={onClick}
       aria-label={`${DAY_LABELS[day]} ${dateNum} ${monthShort}: ${
         entry
@@ -372,7 +457,9 @@ function DayCell({
             ? recipe?.name || 'recipe'
             : entry.text
           : 'no meal planned, click to add'
-      }${activity ? `; activity: ${activity.text}` : ''}`}
+      }${activity ? `; activity: ${activity.text}` : ''}${
+        prepDue ? `; prep needed: ${prepDue.text} for ${DAY_LABELS[prepDue.forDay]}` : ''
+      }`}
     >
       <div className="day-cell-head">
         <span className="day-name">{DAY_SHORT[day]}</span>
@@ -406,6 +493,18 @@ function DayCell({
           )}
         </div>
       )}
+      {prepDue && (
+        <div className="day-prep" aria-label={`Prep ahead: ${prepDue.text}`}>
+          <span className="day-prep-label" aria-hidden="true">
+            📌 prep
+          </span>{' '}
+          <span className="day-prep-text">{prepDue.text}</span>
+          <span className="day-prep-for">
+            {' '}
+            · for {DAY_SHORT[prepDue.forDay]}
+          </span>
+        </div>
+      )}
     </button>
   );
 }
@@ -424,6 +523,8 @@ function DayEditModal({
   onClear,
   onSaveActivity,
   onClearActivity,
+  onSavePrep,
+  onClearPrep,
   onCancel,
 }: {
   day: DayCode;
@@ -435,6 +536,8 @@ function DayEditModal({
   onClear: () => void;
   onSaveActivity: (text: string, notes?: string) => Promise<void>;
   onClearActivity: () => Promise<void>;
+  onSavePrep: (text: string, days_before: number) => Promise<void>;
+  onClearPrep: () => Promise<void>;
   onCancel: () => void;
 }) {
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(
@@ -450,6 +553,10 @@ function DayEditModal({
   );
   const [activityNotes, setActivityNotes] = useState<string>(
     existingActivity?.notes ?? ''
+  );
+  const [prepText, setPrepText] = useState<string>(existing?.prep_ahead?.text ?? '');
+  const [prepDays, setPrepDays] = useState<number>(
+    existing?.prep_ahead?.days_before ?? 1
   );
 
   // Picking a recipe clears free text and vice versa — they're mutually exclusive
@@ -492,19 +599,43 @@ function DayEditModal({
       }
     }
 
+    // Prep changes — only when there's an existing meal entry to attach to.
+    // If user added a meal in this same save, the meal save will include prep
+    // (we pass it through onSave below). For an existing meal, do separate calls.
+    const trimmedPrep = prepText.trim();
+    const existingPrepText = existing?.prep_ahead?.text ?? '';
+    const existingPrepDays = existing?.prep_ahead?.days_before ?? 1;
+    const prepChanged =
+      trimmedPrep !== existingPrepText ||
+      (trimmedPrep && prepDays !== existingPrepDays);
+
+    if (prepChanged && existing && !mealChanged) {
+      if (trimmedPrep) {
+        await onSavePrep(trimmedPrep, prepDays);
+      } else if (existing.prep_ahead) {
+        await onClearPrep();
+      }
+    }
+
     // Meal updates use the existing onSave path (which closes the modal).
-    // If only activity changed, close the modal manually after.
+    // If only activity/prep changed, close the modal manually after.
     if (selectedRecipeId) {
       onSave({
         kind: 'recipe',
         recipe_id: selectedRecipeId,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(trimmedPrep
+          ? { prep_ahead: { text: trimmedPrep, days_before: prepDays } }
+          : {}),
       });
     } else if (freeText.trim()) {
       onSave({
         kind: 'freetext',
         text: freeText.trim(),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(trimmedPrep
+          ? { prep_ahead: { text: trimmedPrep, days_before: prepDays } }
+          : {}),
       });
     } else if (!mealChanged) {
       // Nothing meal-related; close manually
@@ -516,7 +647,10 @@ function DayEditModal({
     !!selectedRecipeId ||
     !!freeText.trim() ||
     activityText.trim() !== (existingActivity?.text ?? '') ||
-    activityNotes.trim() !== (existingActivity?.notes ?? '');
+    activityNotes.trim() !== (existingActivity?.notes ?? '') ||
+    prepText.trim() !== (existing?.prep_ahead?.text ?? '') ||
+    (prepText.trim() &&
+      prepDays !== (existing?.prep_ahead?.days_before ?? 1));
   const dateLabel = date.toLocaleDateString('en-GB', {
     weekday: 'long',
     day: 'numeric',
@@ -626,6 +760,38 @@ function DayEditModal({
                 value={activityNotes}
                 onChange={(e) => setActivityNotes(e.target.value)}
               />
+            )}
+          </div>
+
+          <div className="day-section day-prep-section">
+            <div className="day-section-title">Prep ahead?</div>
+            <div className="hint">
+              Optional — flag any prep this meal needs done in advance (defrost, soak, marinate,
+              start sourdough). The reminder will show on the day you should do the prep.
+            </div>
+            <input
+              type="text"
+              className="day-freetext-input"
+              placeholder="e.g. take chicken out of freezer"
+              value={prepText}
+              onChange={(e) => setPrepText(e.target.value)}
+            />
+            {prepText.trim() && (
+              <div className="day-prep-days-row">
+                <label htmlFor="prep-days" className="day-prep-days-label">
+                  How far ahead?
+                </label>
+                <select
+                  id="prep-days"
+                  className="day-prep-days-select"
+                  value={prepDays}
+                  onChange={(e) => setPrepDays(parseInt(e.target.value, 10))}
+                >
+                  <option value={1}>1 day before (the night before)</option>
+                  <option value={2}>2 days before</option>
+                  <option value={3}>3 days before</option>
+                </select>
+              </div>
             )}
           </div>
         </div>

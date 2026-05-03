@@ -25,6 +25,8 @@ import {
   clearEntry,
   setActivity,
   clearActivity,
+  setMealPrepAhead,
+  clearMealPrepAhead,
   planForPrompt,
   mondayOf,
   shiftWeeks,
@@ -43,6 +45,11 @@ import {
   shoppingForPrompt,
   type ShoppingList,
 } from '@/lib/shopping';
+import {
+  createFeedback,
+  type Feedback,
+  type FeedbackArea,
+} from '@/lib/feedback';
 import { ALL_TOOLS } from '@/lib/tools';
 import { extractAndSave, extractIngredients, categorizeItems } from '@/lib/extract';
 
@@ -81,13 +88,17 @@ interface ChatAction {
     | 'plan_entry_cleared'
     | 'plan_activity_set'
     | 'plan_activity_cleared'
+    | 'plan_prep_set'
+    | 'plan_prep_cleared'
     | 'shopping_list_generated'
     | 'shopping_item_added'
-    | 'shopping_completed';
+    | 'shopping_completed'
+    | 'feedback_submitted';
   memory?: Memory;
   recipe?: Recipe;
   plan?: MealPlan;
   shopping_list?: ShoppingList;
+  feedback?: Feedback;
   added_count?: number;
   week_start?: string;
   day?: DayCode;
@@ -130,7 +141,9 @@ function buildSystemPrompt(
     "- When suggesting meals, prefer recipes from the saved collection if any fit — they're trusted favourites.",
     '- When the user asks to plan the week, use propose_meal_plan. When they want to swap a single day, use set_meal_plan_entry. When they\'re out a day, use clear_meal_plan_entry.',
     '- When the user mentions an evening activity that affects dinner planning (book club, gym, late meeting, dinner out), use set_plan_activity to note it on that day so future planning accounts for it. Use clear_plan_activity if they cancel.',
+    "- When a planned meal needs lead-time prep (defrosting, soaking, marinating, slow-cooker prep, sourdough, taking meat out the freezer), use set_meal_prep_ahead so a reminder appears on the day before. Especially useful when the meal day has a busy activity — flag prep on the previous, calmer day. Use clear_meal_prep_ahead if a meal is swapped for something simpler.",
     '- When the user asks for a shopping list from a planned week, use generate_shopping_list. When they want to add things to the current list mid-week, use add_to_shopping_list. When they\'ve finished shopping, use complete_shopping_list.',
+    "- When the user suggests a new feature, UX improvement, or reports an app bug ('it'd be useful if...', 'I wish I could...', 'this would be better if...'), use submit_feedback to capture it. Pick the area that best matches: 'meals' (chat), 'recipes' (recipes page), 'plan' (week planner), 'shopping' (shopping list), 'general' (cross-cutting). Confirm capture briefly. Do NOT use submit_feedback for food preferences — those are remember_meal.",
     '',
     'Date context:',
     `- Today is ${todayLabel}.`,
@@ -567,6 +580,104 @@ export async function POST(request: Request) {
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'unknown';
               resultText = `error clearing activity: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'set_meal_prep_ahead') {
+          const input = tu.input as {
+            week_start?: string;
+            day?: DayCode;
+            text?: string;
+            days_before?: number;
+          };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day) ||
+            !input.text?.trim()
+          ) {
+            resultText = 'error: week_start, day, and text required';
+            isError = true;
+          } else {
+            try {
+              const days = input.days_before ?? 1;
+              const plan = await setMealPrepAhead(
+                input.week_start,
+                input.day,
+                { text: input.text.trim(), days_before: days },
+                username
+              );
+              if (!plan) {
+                resultText =
+                  'error: no meal entry on that day to attach prep to. Plan a meal first.';
+                isError = true;
+              } else {
+                chatActions.push({
+                  type: 'plan_prep_set',
+                  plan,
+                  week_start: input.week_start,
+                  day: input.day,
+                  text: input.text.trim(),
+                });
+                resultText = `Set prep ahead for ${input.day} on week ${input.week_start} (${days}d before): ${input.text.trim()}`;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error setting prep: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'clear_meal_prep_ahead') {
+          const input = tu.input as { week_start?: string; day?: DayCode };
+          if (
+            !input.week_start ||
+            !input.day ||
+            !ALL_DAYS.includes(input.day)
+          ) {
+            resultText = 'error: week_start and day required';
+            isError = true;
+          } else {
+            try {
+              const plan = await clearMealPrepAhead(
+                input.week_start,
+                input.day,
+                username
+              );
+              if (!plan) {
+                resultText = 'no plan exists for that week — nothing to clear';
+                isError = true;
+              } else {
+                chatActions.push({
+                  type: 'plan_prep_cleared',
+                  plan,
+                  week_start: input.week_start,
+                  day: input.day,
+                });
+                resultText = `Cleared prep flag on ${input.day}, week ${input.week_start}`;
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error clearing prep: ${msg}`;
+              isError = true;
+            }
+          }
+        } else if (tu.name === 'submit_feedback') {
+          const input = tu.input as { content?: string; area?: string };
+          if (!input.content?.trim()) {
+            resultText = 'error: content required';
+            isError = true;
+          } else {
+            try {
+              const feedback = await createFeedback({
+                content: input.content,
+                area: input.area,
+                created_by: username,
+              });
+              chatActions.push({ type: 'feedback_submitted', feedback });
+              resultText = `Saved feedback ${feedback.id}: [${feedback.area}] ${feedback.content}`;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'unknown';
+              resultText = `error saving feedback: ${msg}`;
               isError = true;
             }
           }

@@ -23,12 +23,18 @@ export const DAY_LABELS: Record<DayCode, string> = {
 
 export type EntryKind = 'recipe' | 'freetext';
 
+export interface PrepAhead {
+  text: string;          // e.g. "soak chickpeas overnight"
+  days_before?: number;  // 1 by default (the day before the meal). Allow 1-3.
+}
+
 export interface PlanEntry {
   day: DayCode;
   kind: EntryKind;
   recipe_id?: string;
   text?: string;
   notes?: string;
+  prep_ahead?: PrepAhead;
 }
 
 export interface PlanActivity {
@@ -202,6 +208,17 @@ function sanitiseEntries(entries: PlanEntry[]): PlanEntry[] {
     seen.add(e.day);
     if (e.kind === 'recipe' && !e.recipe_id) return false;
     if (e.kind === 'freetext' && !e.text?.trim()) return false;
+    // Normalise prep_ahead — drop empties, clamp days_before to 1..3
+    if (e.prep_ahead) {
+      const text = e.prep_ahead.text?.trim();
+      if (!text) {
+        delete e.prep_ahead;
+      } else {
+        const dbRaw = e.prep_ahead.days_before;
+        const db = typeof dbRaw === 'number' && dbRaw >= 1 && dbRaw <= 3 ? Math.floor(dbRaw) : 1;
+        e.prep_ahead = { text, days_before: db };
+      }
+    }
     return true;
   });
 }
@@ -279,6 +296,43 @@ export async function clearActivity(
   return (rows[0] as MealPlan) ?? null;
 }
 
+/**
+ * Set or update the prep_ahead flag on an existing meal entry.
+ * Returns null if there's no entry on that day to attach prep to.
+ */
+export async function setMealPrepAhead(
+  weekStart: string,
+  day: DayCode,
+  prep: PrepAhead,
+  updatedBy: string
+): Promise<MealPlan | null> {
+  const plan = await getPlan(weekStart);
+  if (!plan) return null;
+  const target = plan.entries.find((e) => e.day === day);
+  if (!target) return null;
+  const updated = plan.entries.map((e) =>
+    e.day === day ? { ...e, prep_ahead: prep } : e
+  );
+  return setPlan(weekStart, updated, updatedBy);
+}
+
+/** Remove the prep_ahead flag from an entry (entry stays). */
+export async function clearMealPrepAhead(
+  weekStart: string,
+  day: DayCode,
+  updatedBy: string
+): Promise<MealPlan | null> {
+  const plan = await getPlan(weekStart);
+  if (!plan) return null;
+  const updated = plan.entries.map((e) => {
+    if (e.day !== day) return e;
+    const copy = { ...e };
+    delete copy.prep_ahead;
+    return copy;
+  });
+  return setPlan(weekStart, updated, updatedBy);
+}
+
 // --------------------------------------------------------------------------
 // Prompt formatter — used by the chat to know what the current plan looks like
 // --------------------------------------------------------------------------
@@ -316,6 +370,10 @@ export function planForPrompt(
     }
 
     let line = `- ${DAY_LABELS[day]}: ${mealLine}`;
+    if (entry?.prep_ahead) {
+      const db = entry.prep_ahead.days_before ?? 1;
+      line += `  [prep ${db}d ahead: ${entry.prep_ahead.text}]`;
+    }
     if (activity) {
       const actNotes = activity.notes ? ` (${activity.notes})` : '';
       line += `  [activity: ${activity.text}${actNotes}]`;
