@@ -23,6 +23,7 @@ interface PersonalApp {
 
 const PERSONAL_APPS: PersonalApp[] = [
   { key: 'meals', name: 'Meals', href: 'https://meals.pinkcrocodile.dev', status: 'live', icon: '🍳' },
+  { key: 'tv', name: 'TV', href: 'https://tv.pinkcrocodile.dev', status: 'live', icon: '📺' },
   { key: 'books', name: 'Books', href: '#', status: 'soon', icon: '📚' },
   { key: 'budget', name: 'Budget', href: '#', status: 'soon', icon: '💰' },
 ];
